@@ -1,0 +1,8 @@
+site_name: ipyllm
+site_description: Use LLM models from an IPython session
+markdown_extensions:
+  - admonition
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Usage: usage.md
