@@ -27,3 +27,12 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
 ]
+providers = [
+    "llm-anthropic>=0.30",
+    "llm-deepseek>=0.1.6",
+    "llm-gemini>=0.34",
+    "llm-grok>=1.4.2",
+    "llm-mistral>=0.16",
+    "llm-openrouter>=0.7.1",
+    "llm-perplexity>=2026.9.1",
+]
