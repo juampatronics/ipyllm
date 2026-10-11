@@ -24,7 +24,7 @@ configure provider keys using `llm keys set PROVIDER`.
 ## Documentation
 
 The [MkDocs documentation](docs/index.md) covers installation, model
-configuration, line and cell prompts, available tools, approval settings, and
+configuration, prompts, available tools, Agent Skills, approval settings, and
 safety. Preview or build the site with:
 
 ```console

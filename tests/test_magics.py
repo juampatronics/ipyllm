@@ -23,9 +23,10 @@ class FakeConversation:
         self.prompt = None
         self.system = None
 
-    def chain(self, prompt, *, system):
+    def chain(self, prompt, *, system, fragments=None):
         self.prompt = prompt
         self.system = system
+        self.fragments = fragments
         return FakeResponse()
 
 

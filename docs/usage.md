@@ -22,6 +22,52 @@ context through tools:
 - `execute_code` runs code in the active shell, allowing it to use live objects
   and display plots.
 
+## Use Agent Skills
+
+`ipyllm` can load local [Agent Skills](https://agentskills.io/) as task
+instructions. Each skill is a directory containing a `SKILL.md` with YAML
+frontmatter (`name` and `description`) followed by Markdown instructions.
+
+By default, skills are discovered in project- and user-level directories named
+`.agents/skills/`, `.claude/skills/`, `.github/skills/`, `.cursor/skills/`,
+and `.windsurf/skills/`. List available skills and descriptions with:
+
+```ipython
+%llm --skills
+```
+
+Select a skill explicitly as the first prompt token. This works for both line
+and cell prompts:
+
+```ipython
+%llm /pandas Find and fix the missing values in `data`.
+```
+
+```ipython
+%%llm /seaborn
+Compare the distributions in `data` and explain the plot.
+```
+
+Only the selected `SKILL.md` instructions are added to that turn's prompt;
+other skills are not loaded into the conversation. The skill guides the model
+and does not run its scripts or grant new tools. Skills are local text and
+should be reviewed like any other prompt context.
+
+Add extra skill directories in the IPython profile's `ipython_config.py`:
+
+```python
+c.IpyllmMagics.skill_paths = [
+    "~/my-skills",
+    "./team/skills",
+]
+```
+
+Relative paths are resolved from the current working directory. If two
+discovered skills use the same name, invocation is rejected as ambiguous.
+Malformed skill metadata and missing configured directories are reported by
+`%llm --skills`. Skill instruction files larger than 32,000 characters are
+rejected.
+
 ## Commands
 
 | Command | Purpose |
@@ -29,6 +75,7 @@ context through tools:
 | `%llm --model MODEL` | Select a model for this session; starts a fresh conversation. |
 | `%llm --approval on` | Ask before executing code requested by the model. |
 | `%llm --approval off` | Execute model-requested code without an approval prompt. |
+| `%llm --skills` | List discovered skills and descriptions. |
 | `%llm --config` | Show the effective model and approval setting. |
 | `%llm --reset` | Clear the current conversation. |
 
