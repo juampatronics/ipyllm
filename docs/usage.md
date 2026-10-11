@@ -22,6 +22,36 @@ context through tools:
 - `execute_code` runs code in the active shell, allowing it to use live objects
   and display plots.
 
+## Diagnose a shell command
+
+Run a command inside `%%llm --run` to capture its output and ask the model for
+help understanding the result:
+
+```ipython
+%%llm --run Explain the likely cause and suggest a fix.
+pytest -q
+```
+
+The command runs locally in a shell. `ipyllm` displays its stdout, stderr, and
+exit status, then sends the captured output and your diagnostic request to the
+current model conversation. If you omit the request, it asks for a diagnosis
+and suggestions without rerunning the command:
+
+```ipython
+%%llm --run
+python -m pip check
+```
+
+This is opt-in; normal REPL output is not captured or sent automatically.
+Output is limited to 12,000 characters in the model prompt (keeping the
+beginning and end), and commands time out after 120 seconds by default. Change
+the timeout in `ipython_config.py` with
+`c.IpyllmMagics.command_timeout = 60`.
+
+Only run commands you intended to execute. Command output may contain
+credentials, private paths, or other sensitive data; review it and your model
+provider's data handling before sending it.
+
 ## Use Agent Skills
 
 `ipyllm` can load local [Agent Skills](https://agentskills.io/) as task

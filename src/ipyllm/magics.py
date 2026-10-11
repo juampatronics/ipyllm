@@ -5,13 +5,14 @@ from __future__ import annotations
 import builtins
 import re
 import shlex
+import subprocess
 from itertools import islice
 
 import llm
 from IPython.core.error import UsageError
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.magic import Magics, line_cell_magic, magics_class
-from traitlets import Bool, List, Unicode
+from traitlets import Bool, Integer, List, Unicode
 
 from .skills import MAX_SKILL_CHARS, Skill, SkillCatalog, SkillError, discover_skills
 
@@ -30,6 +31,7 @@ _MAX_VARIABLES = 80
 _MAX_HISTORY_ENTRIES = 30
 _MAX_CONTEXT_CHARS = 12_000
 _MAX_REPR_CHARS = 4_000
+_MAX_COMMAND_OUTPUT_CHARS = 12_000
 _HIDDEN_NAMES = {
     "In",
     "Out",
@@ -62,6 +64,12 @@ class IpyllmMagics(Magics):
         config=True,
         help="Additional directories containing Agent Skills.",
     )
+    command_timeout = Integer(
+        default_value=120,
+        min=1,
+        config=True,
+        help="Maximum seconds to wait for a command run with %%llm --run.",
+    )
 
     def __init__(self, shell):
         super().__init__(shell)
@@ -75,8 +83,15 @@ class IpyllmMagics(Magics):
 
         Use ``%llm --model MODEL``, ``%llm --approval on|off``,
         ``%llm --skills``, ``%llm --config``, and ``%llm --reset`` to manage
-        this session. Start a prompt with ``/skill-name`` to load a local skill.
+        this session. In cell mode use ``%%llm --run`` to capture a shell
+        command for diagnosis. Start a prompt with ``/skill-name`` to load a
+        local skill.
         """
+        if cell is not None and (
+            line.strip() == "--run" or line.strip().startswith("--run ")
+        ):
+            self._run_diagnostic_command(line.strip(), cell)
+            return
         if cell is None and self._handle_command(line):
             return
 
@@ -84,6 +99,9 @@ class IpyllmMagics(Magics):
         if not prompt:
             raise UsageError("Provide a prompt, or use `%llm --help` for commands.")
 
+        self._ask(prompt)
+
+    def _ask(self, prompt: str) -> None:
         skill, instructions, prompt = self._select_skill(prompt)
         conversation = self._get_conversation()
         contextual_prompt = (
@@ -108,6 +126,84 @@ class IpyllmMagics(Magics):
         )
         print(response.text())
 
+    def _run_diagnostic_command(self, line: str, command: str) -> None:
+        try:
+            args = shlex.split(line)
+        except ValueError as exc:
+            raise UsageError(str(exc)) from exc
+        if not args or args[0] != "--run":
+            raise UsageError("Use `%%llm --run [diagnostic request]`.")
+        if not command.strip():
+            raise UsageError("Put the shell command to run in the cell body.")
+        diagnostic_request = " ".join(args[1:]) or (
+            "Diagnose this command output, explain the likely cause of any "
+            "failure, and suggest next steps. Do not rerun the command unless "
+            "I ask you to."
+        )
+
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.command_timeout,
+                check=False,
+            )
+            return_code = result.returncode
+            stdout = result.stdout
+            stderr = result.stderr
+            status = f"exit status: {return_code}"
+        except subprocess.TimeoutExpired as exc:
+            return_code = None
+            stdout = self._decode_output(exc.stdout)
+            stderr = self._decode_output(exc.stderr)
+            status = f"timed out after {self.command_timeout} seconds"
+
+        captured = self._format_command_output(stdout, stderr)
+        print(f"Command finished ({status}).")
+        print(captured)
+        model_output = self._truncate_command_output(captured)
+        prompt = (
+            f"Diagnose the result of this user-requested shell command.\n"
+            f"Command:\n{command}\n\n"
+            f"Result: {status}\n"
+            f"Captured output (possibly truncated):\n{model_output}\n\n"
+            f"User request: {diagnostic_request}"
+        )
+        self._ask(prompt)
+
+    @staticmethod
+    def _decode_output(output: str | bytes | None) -> str:
+        if output is None:
+            return ""
+        if isinstance(output, bytes):
+            return output.decode("utf-8", errors="replace")
+        return output
+
+    @staticmethod
+    def _format_command_output(stdout: str, stderr: str) -> str:
+        sections = []
+        if stdout:
+            sections.append(f"stdout:\n{stdout.rstrip()}")
+        if stderr:
+            sections.append(f"stderr:\n{stderr.rstrip()}")
+        return "\n\n".join(sections) if sections else "(command produced no output)"
+
+    @staticmethod
+    def _truncate_command_output(output: str) -> str:
+        if len(output) <= _MAX_COMMAND_OUTPUT_CHARS:
+            return output
+        omitted = len(output) - _MAX_COMMAND_OUTPUT_CHARS
+        half = _MAX_COMMAND_OUTPUT_CHARS // 2
+        return (
+            f"{output[:half]}\n\n"
+            f"... {omitted} characters omitted ...\n\n"
+            f"{output[-half:]}"
+        )
+
     def _handle_command(self, line: str) -> bool:
         if not line.lstrip().startswith("--"):
             return False
@@ -121,6 +217,7 @@ class IpyllmMagics(Magics):
         if command == "--help" and len(args) == 1:
             print(
                 "%llm PROMPT | %%llm PROMPT\n"
+                "%%llm --run [diagnostic request]\n"
                 "%llm --model MODEL\n"
                 "%llm --approval on|off\n"
                 "%llm --skills\n"

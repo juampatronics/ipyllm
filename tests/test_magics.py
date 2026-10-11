@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import unittest
+import subprocess
+from contextlib import redirect_stdout
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -136,6 +139,92 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.magics.reset()
 
         self.assertIsNone(self.magics._conversation)
+
+    def test_run_cell_captures_command_output_for_diagnosis(self):
+        conversation = FakeConversation()
+        self.magics._conversation = conversation
+        completed = subprocess.CompletedProcess(
+            args="pytest -q",
+            returncode=1,
+            stdout="2 failed\n",
+            stderr="ImportError: missing package\n",
+        )
+        output = StringIO()
+        with patch("ipyllm.magics.subprocess.run", return_value=completed) as run:
+            with redirect_stdout(output):
+                self.magics.llm(
+                    "--run Explain the failure",
+                    "pytest -q",
+                )
+
+        run.assert_called_once_with(
+            "pytest -q",
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
+        self.assertIn("stdout:\n2 failed", output.getvalue())
+        self.assertIn("stderr:\nImportError: missing package", output.getvalue())
+        self.assertIn("Command:\npytest -q", conversation.prompt)
+        self.assertIn("exit status: 1", conversation.prompt)
+        self.assertIn("Explain the failure", conversation.prompt)
+        self.assertIn("ImportError: missing package", conversation.prompt)
+
+    def test_run_cell_handles_timeouts_and_bounds_output_context(self):
+        conversation = FakeConversation()
+        self.magics._conversation = conversation
+        timeout = subprocess.TimeoutExpired(
+            cmd="slow-command",
+            timeout=120,
+            output=b"partial stdout",
+            stderr=b"partial stderr",
+        )
+        output = StringIO()
+        with patch("ipyllm.magics.subprocess.run", side_effect=timeout):
+            with redirect_stdout(output):
+                self.magics.llm("--run", "slow-command")
+
+        self.assertIn("timed out after 120 seconds", conversation.prompt)
+        self.assertIn("partial stdout", conversation.prompt)
+        self.assertIn("partial stderr", conversation.prompt)
+
+        large_output = "first" + ("x" * 20_000) + "last"
+        truncated = self.magics._truncate_command_output(large_output)
+        self.assertLessEqual(len(truncated), 12_100)
+        self.assertIn("characters omitted", truncated)
+        self.assertTrue(truncated.startswith("first"))
+        self.assertTrue(truncated.endswith("last"))
+
+    def test_run_cell_requires_a_command_body(self):
+        with self.assertRaisesRegex(UsageError, "shell command"):
+            self.magics.llm("--run", " \n")
+
+    def test_registered_cell_magic_runs_diagnostic_syntax(self):
+        load_ipython_extension(self.shell)
+        magics = self.shell.magics_manager.registry["IpyllmMagics"]
+        conversation = FakeConversation()
+        magics._conversation = conversation
+        completed = subprocess.CompletedProcess(
+            args="python -V",
+            returncode=0,
+            stdout="Python 3\n",
+            stderr="",
+        )
+        with patch("ipyllm.magics.subprocess.run", return_value=completed):
+            result = self.shell.run_cell(
+                "%%llm --run Explain this output.\npython -V",
+                store_history=False,
+                silent=True,
+            )
+        unload_ipython_extension(self.shell)
+
+        self.assertTrue(result.success)
+        self.assertIn("Python 3", conversation.prompt)
+        self.assertIn("Explain this output.", conversation.prompt)
 
 
 if __name__ == "__main__":
