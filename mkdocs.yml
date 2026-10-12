@@ -1,7 +1,14 @@
 site_name: ipyllm
 site_description: Use LLM models from an IPython session
+site_author: Juan Pablo de la Cruz Gutiérrez
+repo_url: https://github.com/juampatronics
 markdown_extensions:
   - admonition
+theme:
+  name: mkdocs
+  highlightjs: True
+  color_mode: auto
+  user_color_mode_toggle: True
 nav:
   - Home: index.md
   - Installation: installation.md
