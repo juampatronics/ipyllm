@@ -37,3 +37,8 @@ providers = [
     "llm-openrouter>=0.7.1",
     "llm-perplexity>=2026.9.1",
 ]
+test = [
+    "matplotlib>=3.11.2",
+    "pandas>=3.0.6",
+    "seaborn>=0.13.2",
+]
