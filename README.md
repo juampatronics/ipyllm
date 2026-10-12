@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="docs/logos/ipyllm_logo.svg" alt="Synaptic Prompt Logo" width="150"/>
+</div>
+
 # ipyllm
 
 An IPython extension for discussing your interactive Python session with models
