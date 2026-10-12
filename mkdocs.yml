@@ -5,10 +5,8 @@ repo_url: https://github.com/juampatronics
 markdown_extensions:
   - admonition
 theme:
-  name: mkdocs
-  highlightjs: True
-  color_mode: auto
-  user_color_mode_toggle: True
+  name: material
+  logo: logos/synaptic-prompt-logo.svg
 nav:
   - Home: index.md
   - Installation: installation.md
