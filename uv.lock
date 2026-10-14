@@ -516,7 +516,17 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "llm-anthropic" },
+    { name = "llm-deepseek" },
+    { name = "llm-gemini" },
+    { name = "llm-grok" },
+    { name = "llm-mistral" },
+    { name = "llm-openrouter" },
+    { name = "llm-perplexity" },
+    { name = "matplotlib" },
+    { name = "pandas" },
     { name = "pytest" },
+    { name = "seaborn" },
 ]
 providers = [
     { name = "llm-anthropic" },
@@ -530,6 +540,7 @@ providers = [
 test = [
     { name = "matplotlib" },
     { name = "pandas" },
+    { name = "pytest" },
     { name = "seaborn" },
 ]
 
@@ -544,7 +555,19 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "llm-anthropic", specifier = ">=0.30" },
+    { name = "llm-deepseek", specifier = ">=0.1.6" },
+    { name = "llm-gemini", specifier = ">=0.34" },
+    { name = "llm-grok", specifier = ">=1.4.2" },
+    { name = "llm-mistral", specifier = ">=0.16" },
+    { name = "llm-openrouter", specifier = ">=0.7.1" },
+    { name = "llm-perplexity", specifier = ">=2026.9.1" },
+    { name = "matplotlib", specifier = ">=3.11.2" },
+    { name = "pandas", specifier = ">=3.0.6" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "seaborn", specifier = ">=0.13.2" },
+]
 providers = [
     { name = "llm-anthropic", specifier = ">=0.30" },
     { name = "llm-deepseek", specifier = ">=0.1.6" },
@@ -557,6 +580,7 @@ providers = [
 test = [
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "pandas", specifier = ">=3.0.6" },
+    { name = "pytest", specifier = ">=9.1.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
 ]
 

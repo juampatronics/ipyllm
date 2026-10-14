@@ -1,7 +1,7 @@
 [project]
 name = "ipyllm"
 version = "0.1.0"
-description = "Interact with LLM models from an IPython session"
+description = "Interact with LLM models from your IPython REPL"
 readme = "README.md"
 license-files = ["LICENSE"]
 authors = [
@@ -25,20 +25,19 @@ requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = [
-    "pytest>=9.1.1",
-]
+dev = [{ include-group = "test" }, { include-group = "providers" }]
 providers = [
-    "llm-anthropic>=0.30",
-    "llm-deepseek>=0.1.6",
-    "llm-gemini>=0.34",
-    "llm-grok>=1.4.2",
-    "llm-mistral>=0.16",
-    "llm-openrouter>=0.7.1",
-    "llm-perplexity>=2026.9.1",
+  "llm-anthropic>=0.30",
+  "llm-deepseek>=0.1.6",
+  "llm-gemini>=0.34",
+  "llm-grok>=1.4.2",
+  "llm-mistral>=0.16",
+  "llm-openrouter>=0.7.1",
+  "llm-perplexity>=2026.9.1",
 ]
 test = [
-    "matplotlib>=3.11.2",
-    "pandas>=3.0.6",
-    "seaborn>=0.13.2",
+  "pytest>=9.1.1",
+  "matplotlib>=3.11.2",
+  "pandas>=3.0.6",
+  "seaborn>=0.13.2",
 ]

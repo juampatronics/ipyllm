@@ -6,8 +6,13 @@ markdown_extensions:
   - admonition
 theme:
   name: material
-  logo: logos/synaptic-prompt-logo.svg
+  logo: ipyllm_logo.svg
 nav:
   - Home: index.md
   - Installation: installation.md
   - Usage: usage.md
+
+extra:
+  analytics:
+    provider: google
+    property: G-8WK5L7HZS0
