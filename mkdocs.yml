@@ -2,11 +2,28 @@ site_name: ipyllm
 site_description: Use LLM models from an IPython session
 site_author: Juan Pablo de la Cruz Gutiérrez
 repo_url: https://github.com/juampatronics
+copyright: Copyright &copy; 2026 Juan Pablo de la Cruz Gutiérrez
+
 markdown_extensions:
   - admonition
+
 theme:
   name: material
   logo: ipyllm_logo.svg
+  palette: 
+
+    # Palette toggle for light mode
+    - scheme: default
+      toggle:
+        icon: material/brightness-7 
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
 nav:
   - Home: index.md
   - Installation: installation.md
@@ -16,3 +33,10 @@ extra:
   analytics:
     provider: google
     property: G-8WK5L7HZS0
+
+  social:
+    - icon: fontawesome/brands/github
+      link: github.com/juampatronics
+
+    - icon: fontawesome/brands/linkedin
+      link: linkedin.com/juanpablocg
