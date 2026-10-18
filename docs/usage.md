@@ -52,6 +52,41 @@ Only run commands you intended to execute. Command output may contain
 credentials, private paths, or other sensitive data; review it and your model
 provider's data handling before sending it.
 
+## Debug in a live script with `IPython.embed`
+
+Drop a debugging session into any point of a running script and get a coding
+assistant with access to the function's live local variables:
+
+```python
+from IPython import embed
+
+def process(rows):
+    result = heavy_computation(rows)
+    if result is None:
+        from IPython import embed
+        embed()  # inspect `rows` and `result` interactively
+    return result
+```
+
+Inside the embedded shell, load `ipyllm` and it sees the surrounding
+function's local variables:
+
+```ipython
+%load_ext ipyllm
+%llm What is holding `result` in a None state? Suggest how to fix the logic above.
+```
+
+Because `embed()` runs in the same process and frame, `ipyllm`'s tools
+(`list_variables`, `inspect_variable`, `get_history`, `execute_code`) operate
+directly on the local names at that point in the code. You can ask the model
+to trace how an unexpected value was produced, check state of earlier
+variables, or run fix-and-retry experiments on the live objects before
+continuing.
+
+The usual caveats apply: embedded code is not sandboxed, and anything you ask
+the model to inspect or execute has the same permissions as the running
+process.
+
 ## Use Agent Skills
 
 `ipyllm` can load local [Agent Skills](https://agentskills.io/) as task

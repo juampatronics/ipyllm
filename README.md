@@ -28,8 +28,9 @@ configure provider keys using `llm keys set PROVIDER`.
 ## Documentation
 
 The [MkDocs documentation](docs/index.md) covers installation, model
-configuration, prompts, command-output diagnosis, available tools, Agent
-Skills, approval settings, and safety. Preview or build the site with:
+configuration, prompts, command-output diagnosis, debugging with
+`IPython.embed`, available tools, Agent Skills, approval settings, and
+safety. Preview or build the site with:
 
 ```console
 uv run mkdocs serve
