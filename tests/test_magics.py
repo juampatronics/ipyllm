@@ -1,7 +1,19 @@
-from __future__ import annotations
+# Copyright 2026 Juan Pablo de la Cruz Gutiérrez
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import unittest
 import subprocess
+import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from types import SimpleNamespace
@@ -46,7 +58,9 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.shell.user_ns["_hidden_test_value"] = "secret"
         self.magics = IpyllmMagics(self.shell)
         self.fake_model = FakeModel()
-        self.model_patcher = patch("ipyllm.magics.llm.get_model", return_value=self.fake_model)
+        self.model_patcher = patch(
+            "ipyllm.magics.llm.get_model", return_value=self.fake_model
+        )
         self.get_model = self.model_patcher.start()
         self.addCleanup(self.model_patcher.stop)
 
@@ -103,7 +117,9 @@ class IpyllmMagicsTests(unittest.TestCase):
     def test_history_range_is_read_and_bounded(self):
         history = self.shell.history_manager
         entries = [(1, number, f"value = {number}") for number in range(40)]
-        with patch.object(history, "get_range_by_str", return_value=iter(entries)) as get_range:
+        with patch.object(
+            history, "get_range_by_str", return_value=iter(entries)
+        ) as get_range:
             response = self.magics.get_history("1-40")
 
         get_range.assert_called_once_with("1-40", raw=True)

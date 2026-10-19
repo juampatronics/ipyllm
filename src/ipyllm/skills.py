@@ -1,10 +1,20 @@
-"""Discovery and loading for local Agent Skills."""
+# Copyright 2026 Juan Pablo de la Cruz Gutiérrez
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from __future__ import annotations
-
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
 
 import yaml
 
@@ -49,7 +59,9 @@ class Skill:
                 "run `%llm --skills` and try again."
             )
         if not body.strip():
-            raise SkillError(f"{self.path} has no skill instructions after its frontmatter.")
+            raise SkillError(
+                f"{self.path} has no skill instructions after its frontmatter."
+            )
         return body.strip()
 
 
@@ -81,10 +93,10 @@ def discover_skills(
     user_dir: Path | None = None,
 ) -> SkillCatalog:
     """Discover valid skills, reporting malformed and ambiguous entries."""
-    roots = [
-        (root, False) for root in default_skill_directories(project_dir, user_dir)
-    ]
-    roots.extend((Path(directory).expanduser(), True) for directory in extra_directories)
+    roots = [(root, False) for root in default_skill_directories(project_dir, user_dir)]
+    roots.extend(
+        (Path(directory).expanduser(), True) for directory in extra_directories
+    )
     catalog = SkillCatalog()
     seen_roots: set[Path] = set()
     found: dict[str, list[Skill]] = {}
@@ -101,7 +113,9 @@ def discover_skills(
 
         if not resolved_root.exists():
             if configured:
-                catalog.errors.append(f"Configured skill directory does not exist: {root}")
+                catalog.errors.append(
+                    f"Configured skill directory does not exist: {root}"
+                )
             continue
         if not resolved_root.is_dir():
             catalog.errors.append(f"Skill directory is not a directory: {root}")
@@ -169,7 +183,9 @@ def parse_skill_document(
     name = metadata.get("name")
     description = metadata.get("description")
     if not isinstance(name, str) or not _SKILL_NAME.fullmatch(name) or "--" in name:
-        raise SkillError("`name` must be lowercase letters, numbers, or single hyphens.")
+        raise SkillError(
+            "`name` must be lowercase letters, numbers, or single hyphens."
+        )
     if len(name) > 64:
         raise SkillError("`name` cannot exceed 64 characters.")
     if skill_directory.name != name:
