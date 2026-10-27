@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/logos/ipyllm_logo.svg" alt="Synaptic Prompt Logo" width="150"/>
+  <img src="docs/ipyllm_logo.svg" alt="Synaptic Prompt Logo" width="150"/>
 </div>
 
 # ipyllm
