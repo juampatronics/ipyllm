@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Interact with LLM models from your IPython REPL"
 readme = "README.md"
 license-files = ["LICENSE"]
+license = "Apache-2.0"
 authors = [
   { name = "Juan Pablo de la Cruz Gutiérrez", email = "juampatronics@gmail.com" },
 ]
@@ -12,16 +13,23 @@ dependencies = [
   "ipython>=9.17.1",
   "llm>=0.36",
   "llm-ollama>=0.17.1",
-  "mkdocs>=1.6.1",
-  "mkdocs-material>=9.7.7",
   "pyyaml>=6.0",
 ]
 classifiers = [
   "Framework :: IPython",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 
+[project.urls]
+Homepage = "https://github.com/juampatronics/ipyllm"
+Repository = "https://github.com/juampatronics/ipyllm"
+Documentation = "https://github.com/juampatronics/ipyllm#readme"
+Issues = "https://github.com/juampatronics/ipyllm/issues"
 [project.scripts]
 ipyllm = "ipyllm:main"
 
@@ -31,6 +39,10 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [{ include-group = "test" }, { include-group = "providers" }]
+doc = [
+  "mkdocs>=1.6.1",
+  "mkdocs-material>=9.7.7",
+]
 providers = [
   "llm-anthropic>=0.30",
   "llm-deepseek>=0.1.6",

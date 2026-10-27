@@ -6,10 +6,10 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' and sys_platform == 'emscripten'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
     "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
@@ -753,8 +753,6 @@ dependencies = [
     { name = "ipython" },
     { name = "llm" },
     { name = "llm-ollama" },
-    { name = "mkdocs" },
-    { name = "mkdocs-material" },
     { name = "pyyaml" },
 ]
 
@@ -771,6 +769,10 @@ dev = [
     { name = "pandas" },
     { name = "pytest" },
     { name = "seaborn" },
+]
+doc = [
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
 ]
 providers = [
     { name = "llm-anthropic" },
@@ -793,8 +795,6 @@ requires-dist = [
     { name = "ipython", specifier = ">=9.17.1" },
     { name = "llm", specifier = ">=0.36" },
     { name = "llm-ollama", specifier = ">=0.17.1" },
-    { name = "mkdocs", specifier = ">=1.6.1" },
-    { name = "mkdocs-material", specifier = ">=9.7.7" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 
@@ -811,6 +811,10 @@ dev = [
     { name = "pandas", specifier = ">=3.0.6" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
+]
+doc = [
+    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs-material", specifier = ">=9.7.7" },
 ]
 providers = [
     { name = "llm-anthropic", specifier = ">=0.30" },
