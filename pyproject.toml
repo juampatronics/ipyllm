@@ -7,7 +7,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Juan Pablo de la Cruz Gutiérrez", email = "juampatronics@gmail.com" },
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
   "ipython>=9.17.1",
   "llm>=0.36",

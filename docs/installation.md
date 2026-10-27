@@ -6,7 +6,7 @@ Install `ipyllm` into the same Python environment used by IPython:
 python -m pip install .
 ```
 
-Run that command from the project checkout. The project requires Python 3.14 or
+Run that command from the project checkout. The project requires Python 3.11 or
 newer.
 
 ## Configure a model
