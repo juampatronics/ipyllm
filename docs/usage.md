@@ -52,31 +52,36 @@ Only run commands you intended to execute. Command output may contain
 credentials, private paths, or other sensitive data; review it and your model
 provider's data handling before sending it.
 
-## Debug in a live script with `IPython.embed`
+## Debug in a live script with `ipyllm.embed`
 
-Drop a debugging session into any point of a running script and get a coding
-assistant with access to the function's live local variables:
+Drop a debugging session into any point of a running script with
+`ipyllm.embed()`. It works like `IPython.terminal.embed()`: the shell sees
+the function's live local variables, and the script resumes when you exit.
+The difference is that `ipyllm` is already loaded, so you can start
+prompting right away:
 
 ```python
-from IPython import embed
+import ipyllm
 
 def process(rows):
     result = heavy_computation(rows)
     if result is None:
-        from IPython import embed
-        embed()  # inspect `rows` and `result` interactively
+        ipyllm.embed()  # inspect `rows` and `result` interactively
     return result
 ```
 
-Inside the embedded shell, load `ipyllm` and it sees the surrounding
-function's local variables:
+Inside the embedded shell, `ipyllm` sees the surrounding function's local
+variables:
 
 ```ipython
-%load_ext ipyllm
 %llm What is holding `result` in a None state? Suggest how to fix the logic above.
 ```
 
-Because `embed()` runs in the same process and frame, `ipyllm`'s tools
+`ipyllm.embed()` accepts the same arguments as `IPython.terminal.embed()`,
+for example `header` and `config`. If you already use `IPython.embed()`,
+load the extension inside the shell with `%load_ext ipyllm` instead.
+
+Because the shell runs in the same process and frame, `ipyllm`'s tools
 (`list_variables`, `inspect_variable`, `get_history`, `execute_code`) operate
 directly on the local names at that point in the code. You can ask the model
 to trace how an unexpected value was produced, check state of earlier
