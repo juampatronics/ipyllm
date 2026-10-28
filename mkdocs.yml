@@ -1,7 +1,7 @@
 site_name: ipyllm
 site_description: Use LLM models from an IPython session
 site_author: Juan Pablo de la Cruz Gutiérrez
-repo_url: https://github.com/juampatronics
+repo_url: https://github.com/juampatronics/ipyllm
 copyright: Copyright &copy; 2026 Juan Pablo de la Cruz Gutiérrez
 
 markdown_extensions:
@@ -36,7 +36,11 @@ extra:
 
   social:
     - icon: fontawesome/brands/github
-      link: github.com/juampatronics
+      link: https://github.com/juampatronics
 
     - icon: fontawesome/brands/linkedin
-      link: linkedin.com/juanpablocg
+      link: https://linkedin.com/in/juanpablocg
+
+    - icon: material/home
+      link: https://juampatronics.com
+
