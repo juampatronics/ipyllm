@@ -1,13 +1,16 @@
 # Installation
 
-Install `ipyllm` into the same Python environment used by IPython:
+Install `ipyllm` from PyPI into the same Python environment used by IPython:
+
+```console
+python -m pip install ipyllm
+```
+
+The project requires Python 3.11 or newer. If you are installing from a local project checkout, use:
 
 ```console
 python -m pip install .
 ```
-
-Run that command from the project checkout. The project requires Python 3.11 or
-newer.
 
 ## Configure a model
 

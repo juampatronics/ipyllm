@@ -9,7 +9,13 @@ supported by the [`llm`](https://llm.datasette.io/) Python package.
 
 ## Install and load
 
-Install the package in the Python environment used by IPython:
+Install `ipyllm` from PyPI into the Python environment used by IPython:
+
+```console
+python -m pip install ipyllm
+```
+
+Or install from a local checkout:
 
 ```console
 python -m pip install .
