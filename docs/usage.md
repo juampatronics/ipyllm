@@ -145,6 +145,8 @@ rejected.
 | `%llm --model MODEL` | Select a model for this session; starts a fresh conversation. |
 | `%llm --approval on` | Ask before executing code requested by the model. |
 | `%llm --approval off` | Execute model-requested code without an approval prompt. |
+| `%llm --debug on` | Show full IPython tracebacks for errors in model-executed code. |
+| `%llm --debug off` | Hide those tracebacks (the default). |
 | `%llm --skills` | List discovered skills and descriptions. |
 | `%llm --save FILE.py` | Save subsequent requests as comments and model-executed Python to a new script. |
 | `%llm --save off` | Stop saving to the current script. |
@@ -212,9 +214,22 @@ c.IpyllmMagics.require_approval = True
 c.IpyllmMagics.model = "MODEL"
 ```
 
-Session commands `%llm --approval ...` and `%llm --model ...` override the
-profile settings for the current shell. The approval prompt requires the exact
-response `yes`.
+Errors from model-executed code are returned to the model so it can diagnose
+and retry, but their tracebacks are hidden from the REPL by default to avoid
+cluttering iterative work. Enable them when debugging the extension or the
+generated code:
+
+```ipython
+%llm --debug on
+```
+
+Use `%llm --debug off` to hide them again. To show tracebacks by default, set
+`c.IpyllmMagics.debug = True` in `ipython_config.py`. This setting does not
+suppress successful output or plots.
+
+Session commands `%llm --approval ...`, `%llm --debug ...`, and
+`%llm --model ...` override the applicable profile settings for the current
+shell. The approval prompt requires the exact response `yes`.
 
 !!! danger "Execution is not sandboxed"
     Executed code has the same permissions as the IPython process. It can read

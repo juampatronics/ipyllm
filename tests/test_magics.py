@@ -15,7 +15,7 @@
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -96,10 +96,44 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.assertEqual(self.shell.user_ns["visible_test_value"], [1, 2, 3, 4])
         self.assertEqual(response, "Execution completed successfully.")
 
+    def test_successful_execution_output_remains_visible(self):
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            self.magics.execute_code("print('visible output')")
+
+        self.assertIn("visible output", stdout.getvalue())
+
     def test_execution_errors_are_returned_to_the_model(self):
-        response = self.magics.execute_code("raise ValueError('broken')")
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            response = self.magics.execute_code("raise ValueError('broken')")
 
         self.assertIn("Execution failed: ValueError: broken", response)
+        self.assertNotIn("ValueError", stdout.getvalue())
+        self.assertNotIn("ValueError", stderr.getvalue())
+
+    def test_debug_mode_displays_execution_tracebacks(self):
+        self.magics.debug = True
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            response = self.magics.execute_code("raise ValueError('broken')")
+
+        self.assertIn("Execution failed: ValueError: broken", response)
+        output = stdout.getvalue() + stderr.getvalue()
+        self.assertIn("Traceback", output)
+        self.assertIn("broken", output)
+
+    def test_debug_command_can_be_toggled_and_validates_values(self):
+        self.assertFalse(self.magics.debug)
+        self.magics._handle_command("--debug on")
+        self.assertTrue(self.magics.debug)
+        self.magics._handle_command("--debug off")
+        self.assertFalse(self.magics.debug)
+
+        with self.assertRaises(UsageError):
+            self.magics._handle_command("--debug sometimes")
 
     def test_variable_inspection_is_bounded(self):
         class LargeRepresentation:

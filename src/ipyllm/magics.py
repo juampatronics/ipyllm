@@ -71,6 +71,11 @@ class IpyllmMagics(Magics):
         config=True,
         help="Ask before executing code requested by the model.",
     )
+    debug = Bool(
+        default_value=False,
+        config=True,
+        help="Show IPython tracebacks for errors in model-executed code.",
+    )
     skill_paths = List(
         Unicode(),
         default_value=[],
@@ -103,10 +108,10 @@ class IpyllmMagics(Magics):
         """Ask the configured model a question, optionally as a cell magic.
 
         Use ``%llm --model MODEL``, ``%llm --approval on|off``,
-        ``%llm --skills``, ``%llm --config``, and ``%llm --reset`` to manage
-        this session. In cell mode use ``%%llm --run`` to capture a shell
-        command for diagnosis. Start a prompt with ``/skill-name`` to load a
-        local skill.
+        ``%llm --debug on|off``, ``%llm --skills``, ``%llm --config``, and
+        ``%llm --reset`` to manage this session. In cell mode use
+        ``%%llm --run`` to capture a shell command for diagnosis. Start a
+        prompt with ``/skill-name`` to load a local skill.
         """
         if cell is not None and (
             line.strip() == "--run" or line.strip().startswith("--run ")
@@ -261,6 +266,7 @@ class IpyllmMagics(Magics):
                 "%%llm --run [diagnostic request]\n"
                 "%llm --model MODEL\n"
                 "%llm --approval on|off\n"
+                "%llm --debug on|off\n"
                 "%llm --skills\n"
                 "%llm --save FILE.py|off\n"
                 "%llm --resume FILE.py\n"
@@ -303,6 +309,7 @@ class IpyllmMagics(Magics):
             print(
                 f"Model: {model_id}\n"
                 f"Require execution approval: {approval}\n"
+                f"Show execution tracebacks: {self.debug}\n"
                 f"Save session to: {save_path}\n"
                 f"Chain limit: {self.chain_limit}"
             )
@@ -320,8 +327,16 @@ class IpyllmMagics(Magics):
             self._approval_override = value == "on"
             print(f"Require execution approval: {self._approval_override}")
             return True
+        if command == "--debug" and len(args) == 2:
+            value = args[1].lower()
+            if value not in {"on", "off"}:
+                raise UsageError("Use `%llm --debug on` or `%llm --debug off`.")
+            self.debug = value == "on"
+            print(f"Show execution tracebacks: {self.debug}")
+            return True
         raise UsageError(
             "Commands: `%llm --model MODEL`, `%llm --approval on|off`, "
+            "`%llm --debug on|off`, "
             "`%llm --skills`, `%llm --save FILE.py|off`, "
             "`%llm --resume FILE.py`, `%llm --chain-limit N`, "
             "`%llm --config`, `%llm --reset`."
@@ -615,7 +630,16 @@ class IpyllmMagics(Magics):
     def execute_code(self, code: str) -> str:
         """Execute Python code in the currently running IPython session."""
         self._record_executed_code(code)
-        result = self._get_shell().run_cell(code, store_history=True)
+        shell = self._get_shell()
+        if self.debug:
+            result = shell.run_cell(code, store_history=True)
+        else:
+            showtraceback = shell.showtraceback
+            shell.showtraceback = lambda *args, **kwargs: None
+            try:
+                result = shell.run_cell(code, store_history=True)
+            finally:
+                shell.showtraceback = showtraceback
         error = result.error_before_exec or result.error_in_exec
         if error is not None:
             return f"Execution failed: {type(error).__name__}: {error}"
