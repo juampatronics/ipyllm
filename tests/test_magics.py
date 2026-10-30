@@ -196,6 +196,95 @@ class IpyllmMagicsTests(unittest.TestCase):
             self.magics._handle_command("--save off")
             self.assertIsNone(self.magics._save_path)
 
+    def test_resume_replays_script_and_appends_new_activity(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "saved session.py"
+            missing = object()
+            previous_file = self.shell.user_ns.get("__file__", missing)
+            if previous_file is missing:
+                self.addCleanup(self.shell.user_ns.pop, "__file__", None)
+            else:
+                self.addCleanup(
+                    self.shell.user_ns.__setitem__, "__file__", previous_file
+                )
+            path.write_text(
+                "# Request:\n"
+                "# Create the baseline value.\n\n"
+                "baseline_value = 41\n",
+                encoding="utf-8",
+            )
+            output = StringIO()
+            with redirect_stdout(output):
+                self.magics._handle_command(f'--resume "{path}"')
+
+            self.assertEqual(self.shell.user_ns["baseline_value"], 41)
+            self.assertEqual(self.magics._save_path, path)
+            self.assertEqual(
+                self.magics._resume_requests, ["Create the baseline value."]
+            )
+            self.assertEqual(self.shell.user_ns["__file__"], str(path))
+
+            self.magics._conversation = FakeConversation()
+            with redirect_stdout(output):
+                self.magics.llm("Add one to the baseline.")
+            prompt = self.magics._conversation.prompt
+            updated_source = path.read_text(encoding="utf-8")
+
+        self.assertIn("Create the baseline value.", prompt)
+        self.assertIn("previous model responses were not saved", prompt)
+        self.assertIn("baseline_value = 41", updated_source)
+        self.assertIn("# Add one to the baseline.", updated_source)
+        self.assertEqual(self.magics._resume_requests, [])
+        self.shell.user_ns.pop("baseline_value", None)
+
+    def test_resume_requires_valid_existing_python_and_no_active_save(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            invalid = root / "invalid.py"
+            invalid.write_text("if True\n", encoding="utf-8")
+            missing = root / "missing.py"
+
+            with self.assertRaisesRegex(UsageError, "Cannot read session file"):
+                self.magics._resume_session(str(missing))
+            with self.assertRaisesRegex(UsageError, "not valid Python"):
+                self.magics._resume_session(str(invalid))
+            with self.assertRaisesRegex(UsageError, "Stop recording"):
+                self.magics._enable_session_save(str(root / "active.py"))
+                self.magics._resume_session(str(invalid))
+
+    def test_resume_execution_failure_does_not_enable_recording(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "fails.py"
+            path.write_text(
+                "partial_resume_value = 1\n"
+                "raise RuntimeError('resume failed')\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "resume failed"):
+                self.magics._resume_session(str(path))
+
+        self.assertIsNone(self.magics._save_path)
+        self.assertNotIn("partial_resume_value", self.magics._resume_requests)
+        self.assertEqual(self.shell.user_ns["partial_resume_value"], 1)
+        self.shell.user_ns.pop("partial_resume_value", None)
+
+    def test_read_saved_requests_preserves_multiline_prompts(self):
+        source = (
+            "# Request:\n"
+            "# First line\n"
+            "#\n"
+            "# Third line\n\n"
+            "value = 1\n\n"
+            "# Request:\n"
+            "# Second request\n\n"
+        )
+
+        self.assertEqual(
+            self.magics._read_saved_requests(source),
+            ["First line\n\nThird line", "Second request"],
+        )
+
     def test_ipython_syntax_is_saved_as_comments(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "session.py"

@@ -148,6 +148,7 @@ rejected.
 | `%llm --skills` | List discovered skills and descriptions. |
 | `%llm --save FILE.py` | Save subsequent requests as comments and model-executed Python to a new script. |
 | `%llm --save off` | Stop saving to the current script. |
+| `%llm --resume FILE.py` | Execute a saved session in the current namespace and continue appending to it. |
 | `%llm --chain-limit N` | Set the maximum model/tool rounds per prompt (default: `10`). |
 | `%llm --config` | Show the effective model and approval setting. |
 | `%llm --reset` | Clear the current conversation. |
@@ -183,6 +184,25 @@ Saving starts when `--save` is issued, so earlier requests, manually-entered
 code, and variables created before recording are not included. The script may
 need setup code or data-loading steps to run independently. IPython-only input
 is preserved as comments because it is not valid standalone Python.
+
+To continue a saved session in a new IPython process, replay its Python code
+and resume appending:
+
+```ipython
+%llm --resume session_file.py
+%llm Continue analyzing the data.
+```
+
+`--resume` executes the file in the current IPython namespace and appends
+subsequent requests and model-executed code to that same file. It extracts
+saved request comments as background for the next LLM prompt, but does not
+restore the prior model responses or full conversation. Resuming requires a
+valid `.py` file and is unavailable while another save target is active; use
+`%llm --save off` first. The session script is executable Python and may repeat
+side effects such as writing files or making network requests, so inspect it
+before resuming. Manually entered code and pre-existing data are not included
+unless they were captured in the file; IPython-only commands remain comments
+and do not run during replay.
 
 Code execution is automatic by default. To require approval by default, add
 these settings to the IPython profile's `ipython_config.py`:

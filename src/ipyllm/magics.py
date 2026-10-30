@@ -17,6 +17,7 @@ import builtins
 import re
 import shlex
 import subprocess
+import sys
 from itertools import islice
 from pathlib import Path
 
@@ -95,6 +96,7 @@ class IpyllmMagics(Magics):
         self._approval_override: bool | None = None
         self._conversation = None
         self._save_path: Path | None = None
+        self._resume_requests: list[str] = []
 
     @line_cell_magic
     def llm(self, line: str, cell: str | None = None) -> None:
@@ -127,6 +129,7 @@ class IpyllmMagics(Magics):
         contextual_prompt = (
             "Available user variables (names and Python types only):\n"
             f"{self._namespace_context()}\n\n"
+            f"{self._resume_request_context()}"
             f"User request:\n{prompt}"
         )
         fragments = None
@@ -146,6 +149,23 @@ class IpyllmMagics(Magics):
             chain_limit=self.chain_limit,
         )
         print(response.text())
+        self._resume_requests.clear()
+
+    def _resume_request_context(self) -> str:
+        if not self._resume_requests:
+            return ""
+        requests = "\n\n".join(
+            f"Request {index}:\n{request}"
+            for index, request in enumerate(self._resume_requests, start=1)
+        )
+        if len(requests) > _MAX_CONTEXT_CHARS:
+            requests = requests[-_MAX_CONTEXT_CHARS:]
+            requests = "(Earlier requests truncated.)\n" + requests
+        return (
+            "Requests recorded in the resumed Python script follow. "
+            "They are context only; previous model responses were not saved:\n"
+            f"{requests}\n\n"
+        )
 
     def _run_diagnostic_command(self, line: str, command: str) -> None:
         try:
@@ -243,6 +263,7 @@ class IpyllmMagics(Magics):
                 "%llm --approval on|off\n"
                 "%llm --skills\n"
                 "%llm --save FILE.py|off\n"
+                "%llm --resume FILE.py\n"
                 "%llm --chain-limit N\n"
                 "%llm --config\n"
                 "%llm --reset"
@@ -257,6 +278,9 @@ class IpyllmMagics(Magics):
                 print("Session recording disabled.")
             else:
                 self._enable_session_save(args[1])
+            return True
+        if command == "--resume" and len(args) == 2:
+            self._resume_session(args[1])
             return True
         if command == "--chain-limit" and len(args) == 2:
             try:
@@ -299,8 +323,87 @@ class IpyllmMagics(Magics):
         raise UsageError(
             "Commands: `%llm --model MODEL`, `%llm --approval on|off`, "
             "`%llm --skills`, `%llm --save FILE.py|off`, "
-            "`%llm --chain-limit N`, `%llm --config`, `%llm --reset`."
+            "`%llm --resume FILE.py`, `%llm --chain-limit N`, "
+            "`%llm --config`, `%llm --reset`."
         )
+
+    def _resume_session(self, filename: str) -> None:
+        if self._save_path is not None:
+            raise UsageError(
+                f"Stop recording to {self._save_path} with `%llm --save off` "
+                "before resuming another session."
+            )
+        path = Path(filename).expanduser()
+        if path.suffix.lower() != ".py":
+            raise UsageError("The session file must have a `.py` extension.")
+        path = path.resolve()
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise UsageError(f"Cannot read session file {path}: {exc}") from exc
+        try:
+            compile(source, str(path), "exec")
+        except SyntaxError as exc:
+            raise UsageError(f"Session file is not valid Python: {exc}") from exc
+
+        try:
+            with path.open("a", encoding="utf-8"):
+                pass
+        except OSError as exc:
+            raise UsageError(f"Cannot append to session file {path}: {exc}") from exc
+
+        self._execute_session_script(path)
+        self._resume_requests = self._read_saved_requests(source)
+        self._save_path = path
+        self._conversation = None
+        print(
+            f"Resumed Python state from {path}. New requests and executed code "
+            "will be appended to this file."
+        )
+
+    def _execute_session_script(self, path: Path) -> None:
+        shell = self._get_shell()
+        namespace = shell.user_ns
+        missing = object()
+        previous_name = namespace.get("__name__", missing)
+        previous_argv = sys.argv
+        namespace["__name__"] = path.stem
+        namespace["__file__"] = str(path)
+        sys.argv = [str(path)]
+        try:
+            shell.safe_execfile(
+                str(path),
+                namespace,
+                namespace,
+                raise_exceptions=True,
+                shell_futures=True,
+            )
+        finally:
+            sys.argv = previous_argv
+            if previous_name is missing:
+                namespace.pop("__name__", None)
+            else:
+                namespace["__name__"] = previous_name
+
+    @staticmethod
+    def _read_saved_requests(source: str) -> list[str]:
+        requests = []
+        lines = source.splitlines()
+        index = 0
+        while index < len(lines):
+            if lines[index] != "# Request:":
+                index += 1
+                continue
+            index += 1
+            request_lines = []
+            while index < len(lines) and lines[index].startswith("#"):
+                line = lines[index][1:]
+                request_lines.append(line[1:] if line.startswith(" ") else line)
+                index += 1
+            request = "\n".join(request_lines).strip()
+            if request:
+                requests.append(request)
+        return requests
 
     def _enable_session_save(self, filename: str) -> None:
         path = Path(filename).expanduser()
