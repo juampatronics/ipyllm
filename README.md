@@ -1,5 +1,18 @@
 <div align="center">
   <img src="docs/ipyllm_logo.svg" alt="Synaptic Prompt Logo" width="150"/>
+  <br/>
+  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml?query=job%3Abuild" alt="Build">
+    <img src="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml/badge.svg?job=build" alt="Build"/>
+  </a>
+  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml?query=job%3Adocs" alt="Docs">
+    <img src="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml/badge.svg?job=docs" alt="Docs"/>
+  </a>
+  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml?query=job%3Atest" alt="Tests">
+    <img src="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml/badge.svg?job=test" alt="Tests"/>
+  </a>
+  <a href="https://pypi.org/project/ipyllm/" alt="PyPI version">
+    <img src="https://img.shields.io/pypi/v/ipyllm?label=pypi" alt="PyPI version"/>
+  </a>
 </div>
 
 # ipyllm
