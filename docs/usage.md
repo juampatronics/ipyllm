@@ -146,8 +146,25 @@ rejected.
 | `%llm --approval on` | Ask before executing code requested by the model. |
 | `%llm --approval off` | Execute model-requested code without an approval prompt. |
 | `%llm --skills` | List discovered skills and descriptions. |
+| `%llm --save FILE.py` | Save subsequent requests as comments and model-executed Python to a new script. |
+| `%llm --save off` | Stop saving to the current script. |
 | `%llm --config` | Show the effective model and approval setting. |
 | `%llm --reset` | Clear the current conversation. |
+
+To record a session, enable saving before making requests:
+
+```ipython
+%llm --save session_file.py
+%llm Create a small example DataFrame and summarize it.
+```
+
+Each request is written as Python comments, followed by code executed through
+the model's `execute_code` tool. The file is created in the current working
+directory (or at the path you provide); existing files are never overwritten.
+Saving starts when `--save` is issued, so earlier requests, manually-entered
+code, and variables created before recording are not included. The script may
+need setup code or data-loading steps to run independently. IPython-only input
+is preserved as comments because it is not valid standalone Python.
 
 Code execution is automatic by default. To require approval by default, add
 these settings to the IPython profile's `ipython_config.py`:

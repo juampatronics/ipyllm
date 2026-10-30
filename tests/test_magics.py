@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -147,6 +149,64 @@ class IpyllmMagicsTests(unittest.TestCase):
     def test_help_command_does_not_send_a_prompt(self):
         self.assertTrue(self.magics._handle_command("--help"))
         self.assertIsNone(self.magics._conversation)
+
+    def test_save_records_requests_as_comments_and_executed_code(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "session_file.py"
+            self.magics._enable_session_save(str(path))
+            self.magics._record_request("Plot `data`.\nUse two lines.")
+            self.magics._record_executed_code("result = len(data)\nprint(result)")
+
+            content = path.read_text(encoding="utf-8")
+
+        self.assertIn("# Request:\n# Plot `data`.\n# Use two lines.\n\n", content)
+        self.assertIn("result = len(data)\nprint(result)\n", content)
+        self.assertLess(content.index("# Request:"), content.index("result = len(data)"))
+        compile(content, str(path), "exec")
+
+    def test_save_command_refuses_existing_file_and_can_be_disabled(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "session.py"
+            path.write_text("existing = True\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(UsageError, "Refusing to overwrite"):
+                self.magics._handle_command(f"--save {path}")
+            self.assertEqual(path.read_text(encoding="utf-8"), "existing = True\n")
+
+            new_path = Path(temporary_directory) / "new_session.py"
+            self.magics._handle_command(f"--save {new_path}")
+            self.assertEqual(self.magics._save_path, new_path)
+            self.magics._handle_command("--save off")
+            self.assertIsNone(self.magics._save_path)
+
+    def test_ipython_syntax_is_saved_as_comments(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "session.py"
+            self.magics._enable_session_save(str(path))
+            with redirect_stdout(StringIO()):
+                self.magics._record_executed_code("%time print('hello')")
+            content = path.read_text(encoding="utf-8")
+
+        self.assertIn("# %time print('hello')", content)
+        self.assertIn("IPython-only input", content)
+        compile(content, str(path), "exec")
+
+    def test_execute_code_records_code_before_execution(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "session.py"
+            self.magics._enable_session_save(str(path))
+            self.magics._record_request("Set up the result.")
+
+            response = self.magics.execute_code("saved_value = 42")
+
+            content = path.read_text(encoding="utf-8")
+
+        self.assertEqual(response, "Execution completed successfully.")
+        self.assertIn("saved_value = 42", content)
+        self.assertLess(content.index("# Set up the result."), content.index("saved_value = 42"))
+        compile(content, str(path), "exec")
+        self.assertEqual(self.shell.user_ns["saved_value"], 42)
+        self.shell.user_ns.pop("saved_value", None)
 
     def test_reset_discards_conversation(self):
         self.magics._get_conversation()

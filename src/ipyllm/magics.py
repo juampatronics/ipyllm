@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
 import builtins
 import re
 import shlex
 import subprocess
 from itertools import islice
+from pathlib import Path
 
 import llm
 from IPython.core.error import UsageError
@@ -86,6 +88,7 @@ class IpyllmMagics(Magics):
         self._model_id: str | None = None
         self._approval_override: bool | None = None
         self._conversation = None
+        self._save_path: Path | None = None
 
     @line_cell_magic
     def llm(self, line: str, cell: str | None = None) -> None:
@@ -112,6 +115,7 @@ class IpyllmMagics(Magics):
         self._ask(prompt)
 
     def _ask(self, prompt: str) -> None:
+        self._record_request(prompt)
         skill, instructions, prompt = self._select_skill(prompt)
         conversation = self._get_conversation()
         contextual_prompt = (
@@ -231,12 +235,20 @@ class IpyllmMagics(Magics):
                 "%llm --model MODEL\n"
                 "%llm --approval on|off\n"
                 "%llm --skills\n"
+                "%llm --save FILE.py|off\n"
                 "%llm --config\n"
                 "%llm --reset"
             )
             return True
         if command == "--skills" and len(args) == 1:
             self._print_skills()
+            return True
+        if command == "--save" and len(args) == 2:
+            if args[1].lower() == "off":
+                self._save_path = None
+                print("Session recording disabled.")
+            else:
+                self._enable_session_save(args[1])
             return True
         if command == "--reset" and len(args) == 1:
             self.reset()
@@ -245,7 +257,12 @@ class IpyllmMagics(Magics):
         if command == "--config" and len(args) == 1:
             model_id = self._model_id or self.model or "llm default"
             approval = self._current_approval_policy()
-            print(f"Model: {model_id}\nRequire execution approval: {approval}")
+            save_path = self._save_path or "off"
+            print(
+                f"Model: {model_id}\n"
+                f"Require execution approval: {approval}\n"
+                f"Save session to: {save_path}"
+            )
             return True
         if command == "--model" and len(args) == 2:
             llm.get_model(args[1])
@@ -262,8 +279,67 @@ class IpyllmMagics(Magics):
             return True
         raise UsageError(
             "Commands: `%llm --model MODEL`, `%llm --approval on|off`, "
-            "`%llm --skills`, `%llm --config`, `%llm --reset`."
+            "`%llm --skills`, `%llm --save FILE.py|off`, "
+            "`%llm --config`, `%llm --reset`."
         )
+
+    def _enable_session_save(self, filename: str) -> None:
+        path = Path(filename).expanduser()
+        if path.suffix.lower() != ".py":
+            raise UsageError("The session file must have a `.py` extension.")
+        path = path.resolve()
+        try:
+            with path.open("x", encoding="utf-8") as session_file:
+                session_file.write(
+                    "#!/usr/bin/env python3\n"
+                    "# -*- coding: utf-8 -*-\n"
+                    "# Recorded by ipyllm. Prompts are comments; executed Python "
+                    "follows.\n\n"
+                )
+        except FileExistsError as exc:
+            raise UsageError(
+                f"Refusing to overwrite existing session file: {path}"
+            ) from exc
+        except OSError as exc:
+            raise UsageError(f"Cannot create session file {path}: {exc}") from exc
+
+        self._save_path = path
+        print(f"Recording new prompts and executed Python to {path}.")
+
+    def _record_request(self, request: str) -> None:
+        if self._save_path is None:
+            return
+        lines = ["# Request:"]
+        lines.extend(f"# {line}" if line else "#" for line in request.splitlines())
+        self._append_session_text("\n".join(lines) + "\n\n")
+
+    def _record_executed_code(self, code: str) -> None:
+        if self._save_path is None:
+            return
+        try:
+            ast.parse(code)
+        except SyntaxError:
+            lines = [
+                "# IPython-only input (not executable as a standalone Python script):"
+            ]
+            lines.extend(f"# {line}" if line else "#" for line in code.splitlines())
+            print(
+                "The executed input uses IPython syntax and is saved as comments, "
+                "so the session file remains valid Python."
+            )
+            self._append_session_text("\n".join(lines) + "\n\n")
+            return
+        self._append_session_text(code.rstrip() + "\n\n")
+
+    def _append_session_text(self, text: str) -> None:
+        assert self._save_path is not None
+        try:
+            with self._save_path.open("a", encoding="utf-8") as session_file:
+                session_file.write(text)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Cannot append to session file {self._save_path}: {exc}"
+            ) from exc
 
     def _discover_skills(self) -> SkillCatalog:
         return discover_skills(self.skill_paths)
@@ -416,6 +492,7 @@ class IpyllmMagics(Magics):
 
     def execute_code(self, code: str) -> str:
         """Execute Python code in the currently running IPython session."""
+        self._record_executed_code(code)
         result = self._get_shell().run_cell(code, store_history=True)
         error = result.error_before_exec or result.error_in_exec
         if error is not None:
