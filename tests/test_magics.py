@@ -40,10 +40,11 @@ class FakeConversation:
         self.prompt = None
         self.system = None
 
-    def chain(self, prompt, *, system, fragments=None):
+    def chain(self, prompt, *, system, fragments=None, chain_limit=None):
         self.prompt = prompt
         self.system = system
         self.fragments = fragments
+        self.chain_limit = chain_limit
         return FakeResponse()
 
 
@@ -145,6 +146,22 @@ class IpyllmMagicsTests(unittest.TestCase):
 
         with self.assertRaises(UsageError):
             self.magics._handle_command("--approval sometimes")
+
+    def test_chain_limit_defaults_to_ten_and_is_passed_to_model(self):
+        self.magics.llm("Do a small task.")
+        conversation = self.fake_model.created_conversation
+        self.assertEqual(conversation.chain_limit, 10)
+
+        self.magics._handle_command("--chain-limit 25")
+        self.magics.llm("Continue with a larger task.")
+        self.assertEqual(conversation.chain_limit, 25)
+
+    def test_chain_limit_must_be_a_positive_integer(self):
+        for value in ("0", "-2", "many"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                UsageError, "positive integer"
+            ):
+                self.magics._handle_command(f"--chain-limit {value}")
 
     def test_help_command_does_not_send_a_prompt(self):
         self.assertTrue(self.magics._handle_command("--help"))

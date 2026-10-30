@@ -148,8 +148,26 @@ rejected.
 | `%llm --skills` | List discovered skills and descriptions. |
 | `%llm --save FILE.py` | Save subsequent requests as comments and model-executed Python to a new script. |
 | `%llm --save off` | Stop saving to the current script. |
+| `%llm --chain-limit N` | Set the maximum model/tool rounds per prompt (default: `10`). |
 | `%llm --config` | Show the effective model and approval setting. |
 | `%llm --reset` | Clear the current conversation. |
+
+Raise the limit for prompts where the model needs several tool interactions:
+
+```ipython
+%llm --chain-limit 25
+%llm Inspect the data, create a plot, and summarize the results.
+```
+
+The value must be a positive integer. You can also set a default in the
+IPython profile's `ipython_config.py`:
+
+```python
+c.IpyllmMagics.chain_limit = 25
+```
+
+Each prompt uses the current limit. A larger value allows more model/tool
+rounds, but can increase latency and model usage.
 
 To record a session, enable saving before making requests:
 

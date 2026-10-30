@@ -82,6 +82,12 @@ class IpyllmMagics(Magics):
         config=True,
         help="Maximum seconds to wait for a command run with %%llm --run.",
     )
+    chain_limit = Integer(
+        default_value=10,
+        min=1,
+        config=True,
+        help="Maximum number of model/tool call rounds per prompt.",
+    )
 
     def __init__(self, shell):
         super().__init__(shell)
@@ -137,6 +143,7 @@ class IpyllmMagics(Magics):
             contextual_prompt,
             system=_SYSTEM_PROMPT,
             fragments=fragments,
+            chain_limit=self.chain_limit,
         )
         print(response.text())
 
@@ -236,6 +243,7 @@ class IpyllmMagics(Magics):
                 "%llm --approval on|off\n"
                 "%llm --skills\n"
                 "%llm --save FILE.py|off\n"
+                "%llm --chain-limit N\n"
                 "%llm --config\n"
                 "%llm --reset"
             )
@@ -250,6 +258,16 @@ class IpyllmMagics(Magics):
             else:
                 self._enable_session_save(args[1])
             return True
+        if command == "--chain-limit" and len(args) == 2:
+            try:
+                chain_limit = int(args[1])
+            except ValueError as exc:
+                raise UsageError("Chain limit must be a positive integer.") from exc
+            if chain_limit < 1:
+                raise UsageError("Chain limit must be a positive integer.")
+            self.chain_limit = chain_limit
+            print(f"Chain limit set to {self.chain_limit}.")
+            return True
         if command == "--reset" and len(args) == 1:
             self.reset()
             print("LLM conversation reset.")
@@ -261,7 +279,8 @@ class IpyllmMagics(Magics):
             print(
                 f"Model: {model_id}\n"
                 f"Require execution approval: {approval}\n"
-                f"Save session to: {save_path}"
+                f"Save session to: {save_path}\n"
+                f"Chain limit: {self.chain_limit}"
             )
             return True
         if command == "--model" and len(args) == 2:
@@ -280,7 +299,7 @@ class IpyllmMagics(Magics):
         raise UsageError(
             "Commands: `%llm --model MODEL`, `%llm --approval on|off`, "
             "`%llm --skills`, `%llm --save FILE.py|off`, "
-            "`%llm --config`, `%llm --reset`."
+            "`%llm --chain-limit N`, `%llm --config`, `%llm --reset`."
         )
 
     def _enable_session_save(self, filename: str) -> None:
@@ -404,7 +423,7 @@ class IpyllmMagics(Magics):
                     self.execute_code,
                 ],
                 before_call=self._before_tool_call,
-                chain_limit=10,
+                chain_limit=self.chain_limit,
             )
         return self._conversation
 
