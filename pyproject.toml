@@ -1,6 +1,6 @@
 [project]
 name = "ipyllm"
-version = "0.3.0"
+version = "0.3.1"
 description = "Interact with LLM models from your IPython REPL"
 readme = "README.md"
 license-files = ["LICENSE"]
