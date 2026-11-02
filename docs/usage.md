@@ -11,6 +11,26 @@ Use `%llm` for a single-line prompt or `%%llm` for a multi-line prompt:
 Plot the time series in `data` with matplotlib and run the plotting code.
 ```
 
+!!! note "Prompts ending in `?`"
+    IPython treats a line that ends in `?` as a request for object help
+    (`foo?` → inspect `foo`), and rewrites it before the magic runs. A
+    line-magic prompt that ends in `?` therefore never reaches the model:
+
+    ```ipython
+    %llm What do you think of this plan?   # IPython turns this into `pinfo plan`
+    ```
+
+    Two ways to send a question that ends in `?`: use the cell magic (the
+    body is passed through unchanged),
+
+    ```ipython
+    %%llm
+    What do you think of this plan?
+    ```
+
+    or end the single-line prompt without the trailing `?`. A `?` anywhere
+    else in the prompt is fine.
+
 The conversation stays in memory for the current IPython session. The model
 starts with variable names and Python types only, and can request additional
 context through tools:
@@ -137,6 +157,45 @@ discovered skills use the same name, invocation is rejected as ambiguous.
 Malformed skill metadata and missing configured directories are reported by
 `%llm --skills`. Skill instruction files larger than 32,000 characters are
 rejected.
+
+## Add files to the context
+
+Reference local files directly in a prompt with `@path`. When you type `@`
+at the start of a word, IPython autocompletes the names of files and
+directories in the referenced folder (directories are shown with a trailing
+`/`, so you can tab into `@sub/` and keep going). You can reference several
+files in one prompt:
+
+```ipython
+%llm @data.py @notes.md Explain how `data.py` builds the table described in `notes.md`.
+```
+
+```ipython
+%llm @plots/ Describe the trend across these plots.
+```
+
+How a referenced file reaches the model depends on its type:
+
+- **Text files** (code, Markdown, CSV, JSON, plain text, …) contribute their
+  content, labeled with the file name, so the model reads them inline. Each
+  file's content is limited to 12,000 characters.
+- **Media files** (images, audio, video, and PDF) are sent as
+  `llm` attachments. They must be a type your model supports; otherwise `llm`
+  reports the unsupported type.
+- **Directories** are expanded to the regular files they contain (searched
+  breadth-first, hidden entries skipped, at most 100 files).
+
+Paths are resolved relative to the current working directory; `~` and
+absolute paths work too. A reference that does not resolve to an existing
+file or directory is left in the prompt as literal text, so email addresses
+and other in-word `@` are unaffected. Repeated references are sent only once.
+Binary files that are neither text nor a supported media type are rejected
+with a clear error.
+
+!!! note "File contents are sent to the provider"
+    Referenced files are read locally and their content (or the file itself,
+    for media) is included in the request to the model. Review the files and
+    the provider's data handling before referencing sensitive ones.
 
 ## Commands
 

@@ -196,9 +196,10 @@ class FakeConversation:
         self.prompt = None
         self.fragments = None
 
-    def chain(self, prompt, *, system, fragments=None, chain_limit=None):
+    def chain(self, prompt, *, system, fragments=None, attachments=None, chain_limit=None):
         self.prompt = prompt
         self.fragments = fragments
+        self.attachments = attachments
         self.chain_limit = chain_limit
         return FakeResponse()
 

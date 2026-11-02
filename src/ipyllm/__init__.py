@@ -14,16 +14,19 @@
 
 """Interact with LLM models from an IPython session."""
 
+from .completer import install_completer, uninstall_completer
 from .magics import IpyllmMagics
 
 
 def load_ipython_extension(ipython) -> None:
-    """Register the IPython magics provided by this package."""
+    """Register the IPython magics and ``@`` file autocompletion."""
     ipython.register_magics(IpyllmMagics)
+    install_completer(ipython)
 
 
 def unload_ipython_extension(ipython) -> None:
-    """Unregister the magics and clear their in-memory state."""
+    """Unregister the magics, completer, and clear their in-memory state."""
+    uninstall_completer(ipython)
     manager = ipython.magics_manager
     magics = manager.registry.pop(IpyllmMagics.__name__, None)
     if magics is not None:

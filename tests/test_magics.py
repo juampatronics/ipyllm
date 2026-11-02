@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -40,10 +41,11 @@ class FakeConversation:
         self.prompt = None
         self.system = None
 
-    def chain(self, prompt, *, system, fragments=None, chain_limit=None):
+    def chain(self, prompt, *, system, fragments=None, attachments=None, chain_limit=None):
         self.prompt = prompt
         self.system = system
         self.fragments = fragments
+        self.attachments = attachments
         self.chain_limit = chain_limit
         return FakeResponse()
 
@@ -441,6 +443,142 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertIn("Python 3", conversation.prompt)
         self.assertIn("Explain this output.", conversation.prompt)
+
+
+class AtReferenceTests(unittest.TestCase):
+    """Cover ``@`` file references: content fragments, attachments, and safety."""
+
+    def setUp(self):
+        self.shell = InteractiveShell.instance()
+        self.magics = IpyllmMagics(self.shell)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        (self.root / "alpha.py").write_text("alpha = 1\n", encoding="utf-8")
+        (self.root / "beta.txt").write_text("beta text", encoding="utf-8")
+        self.sub = self.root / "sub"
+        self.sub.mkdir()
+        (self.sub / "gamma.py").write_text("gamma = 3\n", encoding="utf-8")
+        self.photo = self.root / "photo.png"
+        self.photo.write_bytes(b"\x89PNG\r\n\x1a\n" + b"image-bytes")
+        self._old_cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self._old_cwd)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_text_file_becomes_a_content_fragment(self):
+        prompt, fragments, attachments = self.magics._parse_resources(
+            "Summarize @alpha.py"
+        )
+        self.assertEqual(prompt, "Summarize [file: alpha.py]")
+        self.assertEqual(len(fragments), 1)
+        self.assertIn("[file: alpha.py]", fragments[0])
+        self.assertIn("alpha = 1", fragments[0])
+        self.assertEqual(attachments, [])
+
+    def test_image_becomes_an_attachment(self):
+        prompt, fragments, attachments = self.magics._parse_resources(
+            "Describe @photo.png"
+        )
+        self.assertEqual(prompt, "Describe [file: photo.png]")
+        self.assertEqual(fragments, [])
+        self.assertEqual(len(attachments), 1)
+        self.assertTrue(attachments[0].path.endswith("photo.png"))
+
+    def test_directory_expands_to_its_files(self):
+        prompt, fragments, attachments = self.magics._parse_resources(
+            "Inspect @sub/ and tell me what is there"
+        )
+        self.assertIn("[directory: sub", prompt)
+        self.assertEqual(len(fragments), 1)
+        self.assertIn("gamma = 3", fragments[0])
+        self.assertEqual(attachments, [])
+
+    def test_directory_skips_hidden_entries(self):
+        with_hidden = self.root / "withhidden"
+        with_hidden.mkdir()
+        (with_hidden / "ok.py").write_text("ok = 1\n", encoding="utf-8")
+        hidden_dir = with_hidden / ".git"
+        hidden_dir.mkdir()
+        (hidden_dir / "cfg.py").write_text("hidden = 2\n", encoding="utf-8")
+
+        prompt, fragments, _ = self.magics._parse_resources("Check @withhidden")
+
+        self.assertEqual(len(fragments), 1)
+        self.assertIn("ok = 1", fragments[0])
+        self.assertNotIn("hidden = 2", "".join(fragments))
+        self.assertIn("[directory: withhidden", prompt)
+
+    def test_multiple_references_mixed_types(self):
+        prompt, fragments, attachments = self.magics._parse_resources(
+            "Compare @alpha.py and @beta.txt against @photo.png"
+        )
+        self.assertEqual(
+            prompt,
+            "Compare [file: alpha.py] and [file: beta.txt] against [file: photo.png]",
+        )
+        self.assertEqual(len(fragments), 2)
+        self.assertEqual(len(attachments), 1)
+
+    def test_nonexistent_reference_is_left_literal(self):
+        prompt, fragments, attachments = self.magics._parse_resources(
+            "See @missing.xyz here"
+        )
+        self.assertEqual(prompt, "See @missing.xyz here")
+        self.assertEqual(fragments, [])
+        self.assertEqual(attachments, [])
+
+    def test_in_word_at_is_preserved(self):
+        prompt, fragments, attachments = self.magics._parse_resources(
+            "Email user@example.com please"
+        )
+        self.assertEqual(prompt, "Email user@example.com please")
+        self.assertEqual(fragments, [])
+        self.assertEqual(attachments, [])
+
+    def test_repeated_reference_is_deduplicated(self):
+        prompt, fragments, attachments = self.magics._parse_resources(
+            "@alpha.py and again @alpha.py"
+        )
+        self.assertEqual(len(fragments), 1)
+        self.assertEqual(attachments, [])
+
+    def test_binary_non_media_file_is_rejected(self):
+        blob = self.root / "data.bin"
+        blob.write_bytes(b"\x00\x01\x02\x03\x04binary")
+        with self.assertRaisesRegex(UsageError, "not a text file"):
+            self.magics._parse_resources("Read @data.bin")
+
+    def test_content_is_capped(self):
+        big = self.root / "big.txt"
+        big.write_text("x" * 20_000, encoding="utf-8")
+        _, fragments, _ = self.magics._parse_resources("Read @big.txt")
+        content = fragments[0].split("\n", 1)[1]
+        self.assertLessEqual(len(content), 12_000)
+
+    def test_llm_passes_fragments_and_attachments_to_the_conversation(self):
+        self.magics._conversation = FakeConversation()
+        with redirect_stdout(StringIO()):
+            self.magics.llm("Compare @alpha.py with @photo.png")
+
+        conversation = self.magics._conversation
+        self.assertIn("[file: alpha.py]", conversation.prompt)
+        self.assertIn("[file: photo.png]", conversation.prompt)
+        self.assertEqual(len(conversation.fragments), 1)
+        self.assertIn("alpha = 1", conversation.fragments[0])
+        self.assertEqual(len(conversation.attachments), 1)
+        self.assertTrue(conversation.attachments[0].path.endswith("photo.png"))
+
+    def test_prompt_ending_in_question_mark_is_preserved(self):
+        self.magics._conversation = FakeConversation()
+        with redirect_stdout(StringIO()):
+            self.magics.llm("@alpha.py what do you think of this plan?")
+
+        conversation = self.magics._conversation
+        self.assertIn("[file: alpha.py]", conversation.prompt)
+        self.assertIn("what do you think of this plan?", conversation.prompt)
+        self.assertIn("alpha = 1", conversation.fragments[0])
 
 
 if __name__ == "__main__":
