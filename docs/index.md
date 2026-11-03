@@ -5,7 +5,7 @@ models supported by the [`llm` package](https://llm.datasette.io/). Ask
 questions about your variables or REPL history, request plots, and have the
 model run code in the active IPython shell. Reference local files with `@path`
 to bring code, data, or images into the conversation (`@` autocompletes file
-and directory names). It also works inside a live
+and directory names, and `@@` fuzzy-searches the whole tree). It also works inside a live
 script: drop a debugging session with `ipyllm.embed()` to bring a coding
 assistant into that function's local scope.
 

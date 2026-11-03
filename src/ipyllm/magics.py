@@ -164,7 +164,8 @@ class IpyllmMagics(Magics):
         exception in this session. Start a
         prompt with ``/skill-name`` to load a local skill. Reference local
         files with ``@path`` to add them to the context (``@`` autocompletes
-        file and directory names); several files may be referenced. A
+        file and directory names; ``@@`` fuzzy-searches the whole tree);
+        several files may be referenced. A
         single-line prompt must not end in ``?`` (IPython reserves that for
         object help); use ``%%llm`` for such questions.
         """
@@ -343,7 +344,7 @@ class IpyllmMagics(Magics):
         if command == "--help" and len(args) == 1:
             print(
                 "%llm PROMPT | %%llm PROMPT\n"
-                "  (reference files with @path; @ autocompletes names)\n"
+                "  (reference files with @path; @ autocompletes names; @@ fuzzy-searches)\n"
                 "  (a single-line prompt must not end in '?'; use %%llm for it)\n"
                 "%%llm --run [diagnostic request]\n"
                 "%llm --last-error [diagnostic request]\n"

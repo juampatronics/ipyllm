@@ -1,6 +1,6 @@
 [project]
 name = "ipyllm"
-version = "0.4.0"
+version = "0.5.0"
 description = "Interact with LLM models from your IPython REPL"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -13,6 +13,7 @@ dependencies = [
   "ipython>=9.17.1",
   "llm>=0.36",
   "llm-ollama>=0.17.1",
+  "rapidfuzz>=3.0",
   "pyyaml>=6.0",
 ]
 classifiers = [

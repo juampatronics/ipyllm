@@ -185,8 +185,23 @@ rejected.
 Reference local files directly in a prompt with `@path`. When you type `@`
 at the start of a word, IPython autocompletes the names of files and
 directories in the referenced folder (directories are shown with a trailing
-`/`, so you can tab into `@sub/` and keep going). You can reference several
-files in one prompt:
+`/`, so you can tab into `@sub/` and keep going).
+
+When you don't remember the exact path, type `@@` instead and a loose query
+(a few letters, a typo, or several words) — pressing TAB fuzzy-searches the
+whole current directory tree and completes the best match as a single `@`
+reference:
+
+```ipython
+%llm @@cust data<TAB> What columns does the customer data have?
+# -> %llm @data/customer_data.csv What columns does the customer data have?
+```
+
+The fuzzy search is provided by `rapidfuzz` and skips directories like
+`.git`, `__pycache__`, and `node_modules`; an empty `@@` query lists the
+first entries of the tree.
+
+You can reference several files in one prompt:
 
 ```ipython
 %llm @data.py @notes.md Explain how `data.py` builds the table described in `notes.md`.
