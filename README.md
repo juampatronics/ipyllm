@@ -47,8 +47,9 @@ configure provider keys using `llm keys set PROVIDER`.
 ## Documentation
 
 The [MkDocs documentation](docs/index.md) covers installation, model
-configuration, prompts, adding files to the context, command-output
-diagnosis, debugging with `ipyllm.embed`, available tools, Agent Skills,
+configuration, prompts, adding files to the context, command-output and
+last-error diagnosis, debugging with `ipyllm.embed`, available tools, Agent
+Skills,
 approval settings, and safety. Preview or build the site with:
 
 ```console

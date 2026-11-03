@@ -14,6 +14,7 @@
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -443,6 +444,81 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertIn("Python 3", conversation.prompt)
         self.assertIn("Explain this output.", conversation.prompt)
+
+
+class LastErrorTests(unittest.TestCase):
+    """Cover ``%llm --last-error``: diagnose the most recent shell exception."""
+
+    def setUp(self):
+        self.shell = InteractiveShell.instance()
+        self.magics = IpyllmMagics(self.shell)
+        self.fake_model = FakeModel()
+        self.model_patcher = patch(
+            "ipyllm.magics.llm.get_model", return_value=self.fake_model
+        )
+        self.get_model = self.model_patcher.start()
+        self.addCleanup(self.model_patcher.stop)
+        # ``sys.last_*`` is global; snapshot and clear it so tests are isolated.
+        self._saved = {
+            attr: getattr(sys, attr, None)
+            for attr in ("last_type", "last_value", "last_traceback", "last_exc")
+        }
+        for attr in self._saved:
+            sys.__dict__.pop(attr, None)
+        self.addCleanup(self._restore_last_error)
+
+    def _restore_last_error(self):
+        for attr, value in self._saved.items():
+            if value is None:
+                sys.__dict__.pop(attr, None)
+            else:
+                setattr(sys, attr, value)
+
+    def _raise_in_cell(self, code: str) -> None:
+        """Run ``code`` the way a user cell does, so IPython records the failure."""
+        self.shell.run_cell(code, store_history=False, silent=True)
+
+    def test_requires_a_prior_error(self):
+        with self.assertRaisesRegex(UsageError, "No error has occurred"):
+            self.magics.llm("--last-error")
+
+    def test_captures_most_recent_exception(self):
+        conversation = FakeConversation()
+        self.magics._conversation = conversation
+        self._raise_in_cell("raise ValueError('boom at x=1')")
+        output = StringIO()
+        with redirect_stdout(output):
+            self.magics.llm("--last-error")
+
+        self.assertIn("Last error:", output.getvalue())
+        self.assertIn("ValueError: boom at x=1", output.getvalue())
+        self.assertIn("Diagnose the most recent exception", conversation.prompt)
+        self.assertIn("ValueError: boom at x=1", conversation.prompt)
+
+    def test_includes_custom_request(self):
+        conversation = FakeConversation()
+        self.magics._conversation = conversation
+        self._raise_in_cell("raise ValueError('boom')")
+        self.magics.llm("--last-error why did this fail and how do I fix it")
+        self.assertIn("why did this fail and how do I fix it", conversation.prompt)
+
+    def test_exception_groups_list_sub_exceptions(self):
+        conversation = FakeConversation()
+        self.magics._conversation = conversation
+        self._raise_in_cell(
+            "raise BaseExceptionGroup("
+            "'group', [ValueError('a'), RuntimeError('b')])"
+        )
+        self.magics.llm("--last-error")
+        self.assertIn("group", conversation.prompt)
+        self.assertIn("ValueError: a", conversation.prompt)
+        self.assertIn("RuntimeError: b", conversation.prompt)
+
+    def test_help_lists_last_error(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.magics.llm("--help")
+        self.assertIn("--last-error", output.getvalue())
 
 
 class AtReferenceTests(unittest.TestCase):

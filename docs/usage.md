@@ -72,6 +72,28 @@ Only run commands you intended to execute. Command output may contain
 credentials, private paths, or other sensitive data; review it and your model
 provider's data handling before sending it.
 
+## Diagnose the last error
+
+When a cell raises an exception you don't need to rerun it for help.
+`%llm --last-error` captures the most recent traceback and asks the model to
+diagnose it:
+
+```ipython
+def divide(a, b):
+    return a / b
+
+divide(1, 0)            # ZeroDivisionError
+%llm --last-error explain why this failed and how to fix it
+```
+
+`ipyllm` displays the captured traceback, then sends it and your request to the
+current model conversation. Omit the request to ask for a diagnosis and a fix
+suggestion. The traceback is rendered the way IPython displays it (including
+the source line where the error occurred), with ANSI color codes removed, and
+is limited to 12,000 characters in the model prompt (keeping the beginning and
+end). Only the most recent exception is captured: if a later cell fails, or the
+model itself runs code that fails, that error becomes the one diagnosed.
+
 ## Debug in a live script with `ipyllm.embed`
 
 Drop a debugging session into any point of a running script with

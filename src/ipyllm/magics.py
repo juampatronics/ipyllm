@@ -19,6 +19,7 @@ import re
 import shlex
 import subprocess
 import sys
+import traceback
 from itertools import islice
 from pathlib import Path
 
@@ -60,6 +61,7 @@ _HIDDEN_NAMES = {
 }
 _SKILL_SELECTOR = re.compile(r"^/([^\s]+)(?:\s+|$)")
 _AT_REFERENCE = re.compile(r"@([^\s@]+)")
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 @magics_class
@@ -116,7 +118,9 @@ class IpyllmMagics(Magics):
         Use ``%llm --model MODEL``, ``%llm --approval on|off``,
         ``%llm --debug on|off``, ``%llm --skills``, ``%llm --config``, and
         ``%llm --reset`` to manage this session. In cell mode use
-        ``%%llm --run`` to capture a shell command for diagnosis. Start a
+        ``%%llm --run`` to capture a shell command for diagnosis. Use
+        ``%llm --last-error`` to have the model diagnose the most recent
+        exception in this session. Start a
         prompt with ``/skill-name`` to load a local skill. Reference local
         files with ``@path`` to add them to the context (``@`` autocompletes
         file and directory names); several files may be referenced. A
@@ -407,6 +411,72 @@ class IpyllmMagics(Magics):
             f"{output[-half:]}"
         )
 
+    def _diagnose_last_error(self, diagnostic_request: str) -> None:
+        """Diagnose the most recent exception in this IPython session."""
+        etype, value, tb = self._get_last_exc_info()
+        traceback_text = self._strip_ansi(
+            self._format_last_traceback(etype, value, tb)
+        )
+        print("Last error:")
+        print(traceback_text)
+        model_output = self._truncate_command_output(traceback_text)
+        prompt = (
+            "Diagnose the most recent exception in this IPython session.\n"
+            f"Exception: {etype.__name__}: {value}\n\n"
+            f"Traceback (possibly truncated):\n{model_output}\n\n"
+            f"User request: {diagnostic_request}"
+        )
+        self._ask(prompt)
+
+    @staticmethod
+    def _strip_ansi(text: str) -> str:
+        """Remove ANSI escape codes so the model receives clean text."""
+        return _ANSI_ESCAPE.sub("", text)
+
+    @staticmethod
+    def _get_last_exc_info() -> tuple[type[BaseException], BaseException, object]:
+        """Return the last exception IPython recorded, or raise ``UsageError``.
+
+        IPython stores the most recent unhandled exception in ``sys.last_type``,
+        ``sys.last_value``, and ``sys.last_traceback`` whenever a cell raises one.
+        """
+        if getattr(sys, "last_type", None) is None:
+            raise UsageError(
+                "No error has occurred in this session yet. Run some code that "
+                "fails, then use `%llm --last-error` to analyze it."
+            )
+        return sys.last_type, sys.last_value, sys.last_traceback
+
+    def _format_last_traceback(
+        self,
+        etype: type[BaseException],
+        value: BaseException,
+        tb: object,
+    ) -> str:
+        """Render the last exception the way IPython displays it to the user.
+
+        Exception groups fall back to the standard-library formatter, which is
+        the only one that lists sub-exceptions; anything else uses IPython's
+        structured traceback (with source context), with a standard-library
+        fallback if that is unavailable.
+        """
+        if self._is_exception_group(value):
+            return "".join(traceback.format_exception(etype, value, tb))
+        shell = self._get_shell()
+        try:
+            structured = shell.InteractiveTB.structured_traceback(etype, value, tb)
+            return shell.InteractiveTB.stb2text(structured)
+        except Exception:
+            return "".join(traceback.format_exception(etype, value, tb))
+
+    @staticmethod
+    def _is_exception_group(value: BaseException | None) -> bool:
+        while value is not None:
+            if isinstance(value, BaseExceptionGroup):
+                return True
+            value = value.__context__
+        return False
+
     def _handle_command(self, line: str) -> bool:
         if not line.lstrip().startswith("--"):
             return False
@@ -423,6 +493,7 @@ class IpyllmMagics(Magics):
                 "  (reference files with @path; @ autocompletes names)\n"
                 "  (a single-line prompt must not end in '?'; use %%llm for it)\n"
                 "%%llm --run [diagnostic request]\n"
+                "%llm --last-error [diagnostic request]\n"
                 "%llm --model MODEL\n"
                 "%llm --approval on|off\n"
                 "%llm --debug on|off\n"
@@ -433,6 +504,13 @@ class IpyllmMagics(Magics):
                 "%llm --config\n"
                 "%llm --reset"
             )
+            return True
+        if command == "--last-error":
+            diagnostic_request = " ".join(args[1:]) or (
+                "Explain this exception, identify the likely cause, and "
+                "suggest how to fix it."
+            )
+            self._diagnose_last_error(diagnostic_request)
             return True
         if command == "--skills" and len(args) == 1:
             self._print_skills()
@@ -494,7 +572,8 @@ class IpyllmMagics(Magics):
             print(f"Show execution tracebacks: {self.debug}")
             return True
         raise UsageError(
-            "Commands: `%llm --model MODEL`, `%llm --approval on|off`, "
+            "Commands: `%llm --last-error`, "
+            "`%llm --model MODEL`, `%llm --approval on|off`, "
             "`%llm --debug on|off`, "
             "`%llm --skills`, `%llm --save FILE.py|off`, "
             "`%llm --resume FILE.py`, `%llm --chain-limit N`, "
