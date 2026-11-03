@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/ipyllm_logo.svg" alt="Synaptic Prompt Logo" width="150"/>
+  <img src="https://juampatronics.com/images/ipyllm_logo.svg" alt="Synaptic Prompt Logo" width="150"/>
   <br/>
   <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml?query=job%3Abuild" alt="Build">
     <img src="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml/badge.svg?job=build" alt="Build"/>
@@ -18,7 +18,8 @@
 # ipyllm
 
 An IPython extension for discussing your interactive Python session with models
-supported by the [`llm`](https://llm.datasette.io/) Python package.
+supported by the [`llm`](https://llm.datasette.io/) Python package. For a detailed description,
+as well as a discussion of use cases, please refer to the [blog](https://juampatronics.com/tags/ipyllm/).
 
 ## Install and load
 
@@ -56,3 +57,6 @@ approval settings, and safety. Preview or build the site with:
 uv run mkdocs serve
 uv run mkdocs build
 ```
+
+An online version is available at the [homepage](https://juampatronics.com/ipyllm/).
+
