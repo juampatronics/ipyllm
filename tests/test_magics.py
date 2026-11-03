@@ -28,7 +28,9 @@ from IPython.core.error import UsageError
 from IPython.core.interactiveshell import InteractiveShell
 
 from ipyllm import load_ipython_extension, unload_ipython_extension
+from ipyllm.diagnostics import _truncate_command_output
 from ipyllm.magics import IpyllmMagics
+from ipyllm.recorder import _read_saved_requests
 
 
 class FakeResponse:
@@ -207,9 +209,9 @@ class IpyllmMagicsTests(unittest.TestCase):
     def test_save_records_requests_as_comments_and_executed_code(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "session_file.py"
-            self.magics._enable_session_save(str(path))
-            self.magics._record_request("Plot `data`.\nUse two lines.")
-            self.magics._record_executed_code("result = len(data)\nprint(result)")
+            self.magics._recorder.enable(str(path))
+            self.magics._recorder.record_request("Plot `data`.\nUse two lines.")
+            self.magics._recorder.record_executed_code("result = len(data)\nprint(result)")
 
             content = path.read_text(encoding="utf-8")
 
@@ -229,9 +231,9 @@ class IpyllmMagicsTests(unittest.TestCase):
 
             new_path = Path(temporary_directory) / "new_session.py"
             self.magics._handle_command(f"--save {new_path}")
-            self.assertEqual(self.magics._save_path, new_path)
+            self.assertEqual(self.magics._recorder.save_path, new_path)
             self.magics._handle_command("--save off")
-            self.assertIsNone(self.magics._save_path)
+            self.assertIsNone(self.magics._recorder.save_path)
 
     def test_resume_replays_script_and_appends_new_activity(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -255,7 +257,7 @@ class IpyllmMagicsTests(unittest.TestCase):
                 self.magics._handle_command(f'--resume "{path}"')
 
             self.assertEqual(self.shell.user_ns["baseline_value"], 41)
-            self.assertEqual(self.magics._save_path, path)
+            self.assertEqual(self.magics._recorder.save_path, path)
             self.assertEqual(
                 self.magics._resume_requests, ["Create the baseline value."]
             )
@@ -282,12 +284,12 @@ class IpyllmMagicsTests(unittest.TestCase):
             missing = root / "missing.py"
 
             with self.assertRaisesRegex(UsageError, "Cannot read session file"):
-                self.magics._resume_session(str(missing))
+                self.magics._recorder.resume(str(missing))
             with self.assertRaisesRegex(UsageError, "not valid Python"):
-                self.magics._resume_session(str(invalid))
+                self.magics._recorder.resume(str(invalid))
             with self.assertRaisesRegex(UsageError, "Stop recording"):
-                self.magics._enable_session_save(str(root / "active.py"))
-                self.magics._resume_session(str(invalid))
+                self.magics._recorder.enable(str(root / "active.py"))
+                self.magics._recorder.resume(str(invalid))
 
     def test_resume_execution_failure_does_not_enable_recording(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -299,9 +301,9 @@ class IpyllmMagicsTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(RuntimeError, "resume failed"):
-                self.magics._resume_session(str(path))
+                self.magics._recorder.resume(str(path))
 
-        self.assertIsNone(self.magics._save_path)
+        self.assertIsNone(self.magics._recorder.save_path)
         self.assertNotIn("partial_resume_value", self.magics._resume_requests)
         self.assertEqual(self.shell.user_ns["partial_resume_value"], 1)
         self.shell.user_ns.pop("partial_resume_value", None)
@@ -318,16 +320,16 @@ class IpyllmMagicsTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            self.magics._read_saved_requests(source),
+            _read_saved_requests(source),
             ["First line\n\nThird line", "Second request"],
         )
 
     def test_ipython_syntax_is_saved_as_comments(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "session.py"
-            self.magics._enable_session_save(str(path))
+            self.magics._recorder.enable(str(path))
             with redirect_stdout(StringIO()):
-                self.magics._record_executed_code("%time print('hello')")
+                self.magics._recorder.record_executed_code("%time print('hello')")
             content = path.read_text(encoding="utf-8")
 
         self.assertIn("# %time print('hello')", content)
@@ -337,8 +339,8 @@ class IpyllmMagicsTests(unittest.TestCase):
     def test_execute_code_records_code_before_execution(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "session.py"
-            self.magics._enable_session_save(str(path))
-            self.magics._record_request("Set up the result.")
+            self.magics._recorder.enable(str(path))
+            self.magics._recorder.record_request("Set up the result.")
 
             response = self.magics.execute_code("saved_value = 42")
 
@@ -369,7 +371,7 @@ class IpyllmMagicsTests(unittest.TestCase):
             stderr="ImportError: missing package\n",
         )
         output = StringIO()
-        with patch("ipyllm.magics.subprocess.run", return_value=completed) as run:
+        with patch("ipyllm.diagnostics.subprocess.run", return_value=completed) as run:
             with redirect_stdout(output):
                 self.magics.llm(
                     "--run Explain the failure",
@@ -403,7 +405,7 @@ class IpyllmMagicsTests(unittest.TestCase):
             stderr=b"partial stderr",
         )
         output = StringIO()
-        with patch("ipyllm.magics.subprocess.run", side_effect=timeout):
+        with patch("ipyllm.diagnostics.subprocess.run", side_effect=timeout):
             with redirect_stdout(output):
                 self.magics.llm("--run", "slow-command")
 
@@ -412,7 +414,7 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.assertIn("partial stderr", conversation.prompt)
 
         large_output = "first" + ("x" * 20_000) + "last"
-        truncated = self.magics._truncate_command_output(large_output)
+        truncated = _truncate_command_output(large_output)
         self.assertLessEqual(len(truncated), 12_100)
         self.assertIn("characters omitted", truncated)
         self.assertTrue(truncated.startswith("first"))
@@ -433,7 +435,7 @@ class IpyllmMagicsTests(unittest.TestCase):
             stdout="Python 3\n",
             stderr="",
         )
-        with patch("ipyllm.magics.subprocess.run", return_value=completed):
+        with patch("ipyllm.diagnostics.subprocess.run", return_value=completed):
             result = self.shell.run_cell(
                 "%%llm --run Explain this output.\npython -V",
                 store_history=False,

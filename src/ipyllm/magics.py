@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ast
 import builtins
 import mimetypes
 import re
 import shlex
-import subprocess
-import sys
-import traceback
 from itertools import islice
 from pathlib import Path
 
@@ -29,6 +25,8 @@ from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.magic import Magics, line_cell_magic, magics_class
 from traitlets import Bool, Integer, List, Unicode
 
+from .diagnostics import DiagnosticRunner
+from .recorder import SessionRecorder
 from .skills import MAX_SKILL_CHARS, Skill, SkillCatalog, SkillError, discover_skills
 
 _SYSTEM_PROMPT = """\
@@ -46,7 +44,6 @@ _MAX_VARIABLES = 80
 _MAX_HISTORY_ENTRIES = 30
 _MAX_CONTEXT_CHARS = 12_000
 _MAX_REPR_CHARS = 4_000
-_MAX_COMMAND_OUTPUT_CHARS = 12_000
 _MAX_FILE_CONTENT_CHARS = 12_000
 _MAX_DIR_FILES = 100
 _MEDIA_PREFIXES = ("image/", "audio/", "video/")
@@ -61,7 +58,50 @@ _HIDDEN_NAMES = {
 }
 _SKILL_SELECTOR = re.compile(r"^/([^\s]+)(?:\s+|$)")
 _AT_REFERENCE = re.compile(r"@([^\s@]+)")
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _list_dir_files(root: Path) -> tuple[list[Path], bool]:
+    """List regular files under ``root`` breadth-first, skipping hidden
+    entries and capping the total at ``_MAX_DIR_FILES``."""
+    files: list[Path] = []
+    queue: list[Path] = [root]
+    index = 0
+    while index < len(queue) and len(files) < _MAX_DIR_FILES:
+        directory = queue[index]
+        index += 1
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                queue.append(entry)
+            elif entry.is_file():
+                files.append(entry)
+                if len(files) >= _MAX_DIR_FILES:
+                    break
+    return files, len(files) >= _MAX_DIR_FILES
+
+
+def _detect_type(path: Path) -> str | None:
+    try:
+        from llm.utils import mimetype_from_path
+
+        detected = mimetype_from_path(str(path))
+        if detected:
+            return detected
+    except Exception:
+        pass
+    return mimetypes.guess_type(path.name)[0]
+
+
+def _display_name(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
 
 
 @magics_class
@@ -108,8 +148,9 @@ class IpyllmMagics(Magics):
         self._model_id: str | None = None
         self._approval_override: bool | None = None
         self._conversation = None
-        self._save_path: Path | None = None
         self._resume_requests: list[str] = []
+        self._recorder = SessionRecorder(shell)
+        self._diagnostics = DiagnosticRunner(shell, self._ask)
 
     @line_cell_magic
     def llm(self, line: str, cell: str | None = None) -> None:
@@ -130,7 +171,7 @@ class IpyllmMagics(Magics):
         if cell is not None and (
             line.strip() == "--run" or line.strip().startswith("--run ")
         ):
-            self._run_diagnostic_command(line.strip(), cell)
+            self._diagnostics.run_command(line.strip(), cell, self.command_timeout)
             return
         if cell is None and self._handle_command(line):
             return
@@ -142,7 +183,7 @@ class IpyllmMagics(Magics):
         self._ask(prompt)
 
     def _ask(self, prompt: str) -> None:
-        self._record_request(prompt)
+        self._recorder.record_request(prompt)
         skill, instructions, prompt = self._select_skill(prompt)
         prompt, resource_fragments, attachments = self._parse_resources(prompt)
         conversation = self._get_conversation()
@@ -211,14 +252,14 @@ class IpyllmMagics(Magics):
             path = Path.cwd() / path
 
         if path.is_dir():
-            files, truncated = self._list_dir_files(path)
+            files, truncated = _list_dir_files(path)
             if not files:
-                return f"[directory: {self._display_name(path)} (no files)]", [], []
+                return f"[directory: {_display_name(path)} (no files)]", [], []
             count = f"first {len(files)} files" if truncated else f"{len(files)} files"
-            marker = f"[directory: {self._display_name(path)} ({count})]"
+            marker = f"[directory: {_display_name(path)} ({count})]"
         elif path.is_file():
             files = [path]
-            marker = f"[file: {self._display_name(path)}]"
+            marker = f"[file: {_display_name(path)}]"
         else:
             return f"@{reference}", [], []
 
@@ -234,55 +275,18 @@ class IpyllmMagics(Magics):
             else:
                 content = self._read_text_resource(file)
                 fragments.append(
-                    f"[file: {self._display_name(file)}]\n{content}"
+                    f"[file: {_display_name(file)}]\n{content}"
                 )
         return marker, fragments, attachments
 
-    @staticmethod
-    def _list_dir_files(root: Path) -> tuple[list[Path], bool]:
-        """List regular files under ``root`` breadth-first, skipping hidden
-        entries and capping the total at ``_MAX_DIR_FILES``."""
-        files: list[Path] = []
-        queue: list[Path] = [root]
-        index = 0
-        while index < len(queue) and len(files) < _MAX_DIR_FILES:
-            directory = queue[index]
-            index += 1
-            try:
-                entries = sorted(directory.iterdir())
-            except OSError:
-                continue
-            for entry in entries:
-                if entry.name.startswith("."):
-                    continue
-                if entry.is_dir():
-                    queue.append(entry)
-                elif entry.is_file():
-                    files.append(entry)
-                    if len(files) >= _MAX_DIR_FILES:
-                        break
-        return files, len(files) >= _MAX_DIR_FILES
-
-    @staticmethod
-    def _detect_type(path: Path) -> str | None:
-        try:
-            from llm.utils import mimetype_from_path
-
-            detected = mimetype_from_path(str(path))
-            if detected:
-                return detected
-        except Exception:
-            pass
-        return mimetypes.guess_type(path.name)[0]
-
     def _is_media_file(self, path: Path) -> bool:
-        detected = self._detect_type(path)
+        detected = _detect_type(path)
         if detected is None:
             return False
         return detected.startswith(_MEDIA_PREFIXES) or detected in _MEDIA_TYPES
 
     def _read_text_resource(self, path: Path) -> str:
-        detected = self._detect_type(path) or ""
+        detected = _detect_type(path) or ""
         is_known_text = detected.startswith("text/")
         try:
             with path.open("rb") as handle:
@@ -310,13 +314,6 @@ class IpyllmMagics(Magics):
             content = content[:_MAX_FILE_CONTENT_CHARS]
         return content
 
-    @staticmethod
-    def _display_name(path: Path) -> str:
-        try:
-            return str(path.resolve().relative_to(Path.cwd()))
-        except ValueError:
-            return str(path)
-
     def _resume_request_context(self) -> str:
         if not self._resume_requests:
             return ""
@@ -332,150 +329,6 @@ class IpyllmMagics(Magics):
             "They are context only; previous model responses were not saved:\n"
             f"{requests}\n\n"
         )
-
-    def _run_diagnostic_command(self, line: str, command: str) -> None:
-        try:
-            args = shlex.split(line)
-        except ValueError as exc:
-            raise UsageError(str(exc)) from exc
-        if not args or args[0] != "--run":
-            raise UsageError("Use `%%llm --run [diagnostic request]`.")
-        if not command.strip():
-            raise UsageError("Put the shell command to run in the cell body.")
-        diagnostic_request = " ".join(args[1:]) or (
-            "Diagnose this command output, explain the likely cause of any "
-            "failure, and suggest next steps. Do not rerun the command unless "
-            "I ask you to."
-        )
-
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.command_timeout,
-                check=False,
-            )
-            return_code = result.returncode
-            stdout = result.stdout
-            stderr = result.stderr
-            status = f"exit status: {return_code}"
-        except subprocess.TimeoutExpired as exc:
-            return_code = None
-            stdout = self._decode_output(exc.stdout)
-            stderr = self._decode_output(exc.stderr)
-            status = f"timed out after {self.command_timeout} seconds"
-
-        captured = self._format_command_output(stdout, stderr)
-        print(f"Command finished ({status}).")
-        print(captured)
-        model_output = self._truncate_command_output(captured)
-        prompt = (
-            f"Diagnose the result of this user-requested shell command.\n"
-            f"Command:\n{command}\n\n"
-            f"Result: {status}\n"
-            f"Captured output (possibly truncated):\n{model_output}\n\n"
-            f"User request: {diagnostic_request}"
-        )
-        self._ask(prompt)
-
-    @staticmethod
-    def _decode_output(output: str | bytes | None) -> str:
-        if output is None:
-            return ""
-        if isinstance(output, bytes):
-            return output.decode("utf-8", errors="replace")
-        return output
-
-    @staticmethod
-    def _format_command_output(stdout: str, stderr: str) -> str:
-        sections = []
-        if stdout:
-            sections.append(f"stdout:\n{stdout.rstrip()}")
-        if stderr:
-            sections.append(f"stderr:\n{stderr.rstrip()}")
-        return "\n\n".join(sections) if sections else "(command produced no output)"
-
-    @staticmethod
-    def _truncate_command_output(output: str) -> str:
-        if len(output) <= _MAX_COMMAND_OUTPUT_CHARS:
-            return output
-        omitted = len(output) - _MAX_COMMAND_OUTPUT_CHARS
-        half = _MAX_COMMAND_OUTPUT_CHARS // 2
-        return (
-            f"{output[:half]}\n\n"
-            f"... {omitted} characters omitted ...\n\n"
-            f"{output[-half:]}"
-        )
-
-    def _diagnose_last_error(self, diagnostic_request: str) -> None:
-        """Diagnose the most recent exception in this IPython session."""
-        etype, value, tb = self._get_last_exc_info()
-        traceback_text = self._strip_ansi(
-            self._format_last_traceback(etype, value, tb)
-        )
-        print("Last error:")
-        print(traceback_text)
-        model_output = self._truncate_command_output(traceback_text)
-        prompt = (
-            "Diagnose the most recent exception in this IPython session.\n"
-            f"Exception: {etype.__name__}: {value}\n\n"
-            f"Traceback (possibly truncated):\n{model_output}\n\n"
-            f"User request: {diagnostic_request}"
-        )
-        self._ask(prompt)
-
-    @staticmethod
-    def _strip_ansi(text: str) -> str:
-        """Remove ANSI escape codes so the model receives clean text."""
-        return _ANSI_ESCAPE.sub("", text)
-
-    @staticmethod
-    def _get_last_exc_info() -> tuple[type[BaseException], BaseException, object]:
-        """Return the last exception IPython recorded, or raise ``UsageError``.
-
-        IPython stores the most recent unhandled exception in ``sys.last_type``,
-        ``sys.last_value``, and ``sys.last_traceback`` whenever a cell raises one.
-        """
-        if getattr(sys, "last_type", None) is None:
-            raise UsageError(
-                "No error has occurred in this session yet. Run some code that "
-                "fails, then use `%llm --last-error` to analyze it."
-            )
-        return sys.last_type, sys.last_value, sys.last_traceback
-
-    def _format_last_traceback(
-        self,
-        etype: type[BaseException],
-        value: BaseException,
-        tb: object,
-    ) -> str:
-        """Render the last exception the way IPython displays it to the user.
-
-        Exception groups fall back to the standard-library formatter, which is
-        the only one that lists sub-exceptions; anything else uses IPython's
-        structured traceback (with source context), with a standard-library
-        fallback if that is unavailable.
-        """
-        if self._is_exception_group(value):
-            return "".join(traceback.format_exception(etype, value, tb))
-        shell = self._get_shell()
-        try:
-            structured = shell.InteractiveTB.structured_traceback(etype, value, tb)
-            return shell.InteractiveTB.stb2text(structured)
-        except Exception:
-            return "".join(traceback.format_exception(etype, value, tb))
-
-    @staticmethod
-    def _is_exception_group(value: BaseException | None) -> bool:
-        while value is not None:
-            if isinstance(value, BaseExceptionGroup):
-                return True
-            value = value.__context__
-        return False
 
     def _handle_command(self, line: str) -> bool:
         if not line.lstrip().startswith("--"):
@@ -510,20 +363,20 @@ class IpyllmMagics(Magics):
                 "Explain this exception, identify the likely cause, and "
                 "suggest how to fix it."
             )
-            self._diagnose_last_error(diagnostic_request)
+            self._diagnostics.diagnose_last_error(diagnostic_request)
             return True
         if command == "--skills" and len(args) == 1:
             self._print_skills()
             return True
         if command == "--save" and len(args) == 2:
             if args[1].lower() == "off":
-                self._save_path = None
-                print("Session recording disabled.")
+                self._recorder.disable()
             else:
-                self._enable_session_save(args[1])
+                self._recorder.enable(args[1])
             return True
         if command == "--resume" and len(args) == 2:
-            self._resume_session(args[1])
+            self._resume_requests = self._recorder.resume(args[1])
+            self._conversation = None
             return True
         if command == "--chain-limit" and len(args) == 2:
             try:
@@ -542,7 +395,7 @@ class IpyllmMagics(Magics):
         if command == "--config" and len(args) == 1:
             model_id = self._model_id or self.model or "llm default"
             approval = self._current_approval_policy()
-            save_path = self._save_path or "off"
+            save_path = self._recorder.save_path or "off"
             print(
                 f"Model: {model_id}\n"
                 f"Require execution approval: {approval}\n"
@@ -579,142 +432,6 @@ class IpyllmMagics(Magics):
             "`%llm --resume FILE.py`, `%llm --chain-limit N`, "
             "`%llm --config`, `%llm --reset`."
         )
-
-    def _resume_session(self, filename: str) -> None:
-        if self._save_path is not None:
-            raise UsageError(
-                f"Stop recording to {self._save_path} with `%llm --save off` "
-                "before resuming another session."
-            )
-        path = Path(filename).expanduser()
-        if path.suffix.lower() != ".py":
-            raise UsageError("The session file must have a `.py` extension.")
-        path = path.resolve()
-        try:
-            source = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise UsageError(f"Cannot read session file {path}: {exc}") from exc
-        try:
-            compile(source, str(path), "exec")
-        except SyntaxError as exc:
-            raise UsageError(f"Session file is not valid Python: {exc}") from exc
-
-        try:
-            with path.open("a", encoding="utf-8"):
-                pass
-        except OSError as exc:
-            raise UsageError(f"Cannot append to session file {path}: {exc}") from exc
-
-        self._execute_session_script(path)
-        self._resume_requests = self._read_saved_requests(source)
-        self._save_path = path
-        self._conversation = None
-        print(
-            f"Resumed Python state from {path}. New requests and executed code "
-            "will be appended to this file."
-        )
-
-    def _execute_session_script(self, path: Path) -> None:
-        shell = self._get_shell()
-        namespace = shell.user_ns
-        missing = object()
-        previous_name = namespace.get("__name__", missing)
-        previous_argv = sys.argv
-        namespace["__name__"] = path.stem
-        namespace["__file__"] = str(path)
-        sys.argv = [str(path)]
-        try:
-            shell.safe_execfile(
-                str(path),
-                namespace,
-                namespace,
-                raise_exceptions=True,
-                shell_futures=True,
-            )
-        finally:
-            sys.argv = previous_argv
-            if previous_name is missing:
-                namespace.pop("__name__", None)
-            else:
-                namespace["__name__"] = previous_name
-
-    @staticmethod
-    def _read_saved_requests(source: str) -> list[str]:
-        requests = []
-        lines = source.splitlines()
-        index = 0
-        while index < len(lines):
-            if lines[index] != "# Request:":
-                index += 1
-                continue
-            index += 1
-            request_lines = []
-            while index < len(lines) and lines[index].startswith("#"):
-                line = lines[index][1:]
-                request_lines.append(line[1:] if line.startswith(" ") else line)
-                index += 1
-            request = "\n".join(request_lines).strip()
-            if request:
-                requests.append(request)
-        return requests
-
-    def _enable_session_save(self, filename: str) -> None:
-        path = Path(filename).expanduser()
-        if path.suffix.lower() != ".py":
-            raise UsageError("The session file must have a `.py` extension.")
-        path = path.resolve()
-        try:
-            with path.open("x", encoding="utf-8") as session_file:
-                session_file.write(
-                    "#!/usr/bin/env python3\n"
-                    "# -*- coding: utf-8 -*-\n"
-                    "# Recorded by ipyllm. Prompts are comments; executed Python "
-                    "follows.\n\n"
-                )
-        except FileExistsError as exc:
-            raise UsageError(
-                f"Refusing to overwrite existing session file: {path}"
-            ) from exc
-        except OSError as exc:
-            raise UsageError(f"Cannot create session file {path}: {exc}") from exc
-
-        self._save_path = path
-        print(f"Recording new prompts and executed Python to {path}.")
-
-    def _record_request(self, request: str) -> None:
-        if self._save_path is None:
-            return
-        lines = ["# Request:"]
-        lines.extend(f"# {line}" if line else "#" for line in request.splitlines())
-        self._append_session_text("\n".join(lines) + "\n\n")
-
-    def _record_executed_code(self, code: str) -> None:
-        if self._save_path is None:
-            return
-        try:
-            ast.parse(code)
-        except SyntaxError:
-            lines = [
-                "# IPython-only input (not executable as a standalone Python script):"
-            ]
-            lines.extend(f"# {line}" if line else "#" for line in code.splitlines())
-            print(
-                "The executed input uses IPython syntax and is saved as comments, "
-                "so the session file remains valid Python."
-            )
-            self._append_session_text("\n".join(lines) + "\n\n")
-            return
-        self._append_session_text(code.rstrip() + "\n\n")
-
-    def _append_session_text(self, text: str) -> None:
-        assert self._save_path is not None
-        try:
-            with self._save_path.open("a", encoding="utf-8") as session_file:
-                session_file.write(text)
-        except OSError as exc:
-            raise RuntimeError(
-                f"Cannot append to session file {self._save_path}: {exc}"
-            ) from exc
 
     def _discover_skills(self) -> SkillCatalog:
         return discover_skills(self.skill_paths)
@@ -867,7 +584,7 @@ class IpyllmMagics(Magics):
 
     def execute_code(self, code: str) -> str:
         """Execute Python code in the currently running IPython session."""
-        self._record_executed_code(code)
+        self._recorder.record_executed_code(code)
         shell = self._get_shell()
         if self.debug:
             result = shell.run_cell(code, store_history=True)
