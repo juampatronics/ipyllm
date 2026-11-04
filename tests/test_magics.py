@@ -34,11 +34,37 @@ from ipyllm.recorder import _read_saved_requests
 
 
 class FakeResponse:
+    def __init__(self, text="model response", *, input=0, output=0):
+        self._text = text
+        self._input = input
+        self._output = output
+
     def text(self):
-        return "model response"
+        return self._text
 
     def stream_events(self):
-        yield SimpleNamespace(type="text", chunk="model response")
+        yield SimpleNamespace(type="text", chunk=self._text)
+
+    def usage(self):
+        return SimpleNamespace(input=self._input, output=self._output)
+
+
+class FakeChainResponse:
+    def __init__(self, responses):
+        self._responses = responses
+
+    def responses(self):
+        return iter(self._responses)
+
+    def stream_events(self):
+        for response in self._responses:
+            yield from response.stream_events()
+
+    def usage(self):
+        return SimpleNamespace(
+            input=sum(r.usage().input for r in self._responses),
+            output=sum(r.usage().output for r in self._responses),
+        )
 
 
 class FakeConversation:
@@ -46,6 +72,8 @@ class FakeConversation:
         self.options = kwargs
         self.prompt = None
         self.system = None
+        self.model = SimpleNamespace(model_id="fake-model")
+        self.next_tokens = (0, 0)  # (input, output) for the next chain() call
 
     def chain(self, prompt, *, system, fragments=None, attachments=None, chain_limit=None):
         self.prompt = prompt
@@ -53,7 +81,8 @@ class FakeConversation:
         self.fragments = fragments
         self.attachments = attachments
         self.chain_limit = chain_limit
-        return FakeResponse()
+        input_tokens, output_tokens = self.next_tokens
+        return FakeResponse(input=input_tokens, output=output_tokens)
 
 
 class FakeModel:
@@ -262,6 +291,90 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.assertNotIn("\x1b[2m", output)
         self.assertIn("thinking", output)
         self.assertIn("the answer", output)
+
+    def test_display_response_returns_single_round_usage(self):
+        response = FakeResponse(text="done", input=12, output=4)
+
+        stdout = StringIO()
+        with redirect_stdout(stdout), _color_state(False):
+            result = _display_response(response)
+
+        self.assertEqual(result, (12, 4))
+
+    def test_display_response_sums_all_chain_rounds(self):
+        first = FakeResponse(text="Let me check.", input=10, output=5)
+        second = FakeResponse(text="It is done.", input=7, output=3)
+        chain = FakeChainResponse([first, second])
+
+        stdout = StringIO()
+        with redirect_stdout(stdout), _color_state(False):
+            result = _display_response(chain)
+
+        self.assertEqual(result, (17, 8))
+        output = stdout.getvalue()
+        self.assertIn("Let me check.", output)
+        self.assertIn("It is done.", output)
+        # The chain's round-boundary space keeps the two answers apart.
+        self.assertIn("Let me check. It is done.", output)
+
+    def test_display_response_without_usage_reports_zero(self):
+        class NoUsageResponse:
+            def stream_events(self):
+                yield SimpleNamespace(type="text", chunk="answer")
+
+        stdout = StringIO()
+        with redirect_stdout(stdout), _color_state(False):
+            result = _display_response(NoUsageResponse())
+
+        self.assertEqual(result, (0, 0))
+        self.assertIn("answer", stdout.getvalue())
+
+    def test_ask_records_and_accumulates_tokens_per_model(self):
+        conversation = self.magics._get_conversation()
+        conversation.next_tokens = (10, 5)
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            self.magics.llm("first prompt")
+        output = stdout.getvalue()
+        self.assertIn("last prompt: 15 (10 in, 5 out)", output)
+        self.assertIn("session: 15 (10 in, 5 out)", output)
+        self.assertIn("model: fake-model", output)
+        self.assertEqual(
+            self.magics._token_usage["fake-model"],
+            {"in": 10, "out": 5, "prompts": 1},
+        )
+
+        conversation.next_tokens = (7, 3)
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            self.magics.llm("second prompt")
+        output = stdout.getvalue()
+        self.assertIn("last prompt: 10 (7 in, 3 out)", output)
+        self.assertIn("session: 25 (17 in, 8 out)", output)
+        self.assertEqual(
+            self.magics._token_usage["fake-model"],
+            {"in": 17, "out": 8, "prompts": 2},
+        )
+
+    def test_tokens_command_lists_per_model_totals(self):
+        conversation = self.magics._get_conversation()
+        conversation.next_tokens = (10, 5)
+        with redirect_stdout(StringIO()):
+            self.magics.llm("first prompt")
+
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            self.magics._handle_command("--tokens")
+        output = stdout.getvalue()
+        self.assertIn("fake-model", output)
+        self.assertIn("15 tokens (10 in, 5 out)", output)
+        self.assertIn("over 1 prompt(s)", output)
+
+    def test_tokens_command_empty_before_any_prompt(self):
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            self.magics._handle_command("--tokens")
+        self.assertIn("No token usage recorded yet.", stdout.getvalue())
 
     def test_tool_result_is_shown_dim(self):
         stdout = StringIO()

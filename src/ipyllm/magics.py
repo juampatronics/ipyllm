@@ -139,29 +139,69 @@ def _truncate_display(text: str, limit: int = _DISPLAY_RESULT_CHARS) -> str:
     return text[:limit].rstrip() + "…"
 
 
-def _display_response(response) -> None:
+def _response_rounds(response):
+    """Yield the individual responses making up ``response``.
+
+    A chained (tool-call) response yields one entry per model round; a
+    single response yields itself. Every yielded object exposes
+    ``stream_events()`` and, when the provider supports it, ``usage()``.
+    """
+    rounds = getattr(response, "responses", None)
+    if rounds is None:
+        yield response
+        return
+    yield from rounds()
+
+
+def _display_response(response) -> tuple[int, int]:
     """Print a model response with readable styling.
 
     The model's answer text is written in the normal foreground while its
     reasoning (thought) is dimmed. Intermediate tool results are rendered by
     ``_display_tool_result``. When color is disabled (output is piped or
     ``NO_COLOR`` is set) everything is printed as plain text.
+
+    Returns the (input, output) token counts summed across every round of the
+    response; each value is ``0`` when the provider did not report it.
     """
     stream = sys.stdout
     dim = _color_enabled(stream)
-    for event in response.stream_events():
-        chunk = getattr(event, "chunk", "") or ""
-        if not chunk:
-            continue
-        etype = getattr(event, "type", None)
-        if etype == "reasoning":
-            stream.write(_dim(chunk, dim))
-        elif etype == "text":
-            stream.write(chunk)
-        # tool_call_* / tool_result events are rendered by _display_tool_result.
-        stream.flush()
+    total_input = 0
+    total_output = 0
+    last_char = ""
+    for round_response in _response_rounds(response):
+        first_text = True
+        for event in round_response.stream_events():
+            etype = getattr(event, "type", None)
+            chunk = getattr(event, "chunk", "") or ""
+            if etype == "text" and chunk:
+                if (
+                    first_text
+                    and last_char
+                    and not last_char.isspace()
+                    and not chunk[0].isspace()
+                ):
+                    # Mirror the chain's round-boundary space so consecutive
+                    # answers do not run together.
+                    stream.write(" ")
+                first_text = False
+            if not chunk:
+                continue
+            if etype == "reasoning":
+                stream.write(_dim(chunk, dim))
+            elif etype == "text":
+                stream.write(chunk)
+                last_char = chunk[-1]
+            # tool_call_* / tool_result events are rendered by _display_tool_result.
+            stream.flush()
+        usage_fn = getattr(round_response, "usage", None)
+        if callable(usage_fn):
+            usage = usage_fn()
+            total_input += getattr(usage, "input", 0) or 0
+            total_output += getattr(usage, "output", 0) or 0
     stream.write("\n")
     stream.flush()
+    return total_input, total_output
 
 
 def _display_tool_result(tool, tool_call, tool_result) -> None:
@@ -289,6 +329,7 @@ class IpyllmMagics(Magics):
         self._approval_override: bool | None = None
         self._conversation = None
         self._resume_requests: list[str] = []
+        self._token_usage: dict[str, dict[str, int]] = {}
         self._recorder = SessionRecorder(shell)
         self._diagnostics = DiagnosticRunner(shell, self._ask)
         self._config_path: Path | None = None
@@ -358,8 +399,59 @@ class IpyllmMagics(Magics):
             attachments=attachments or None,
             chain_limit=self.chain_limit,
         )
-        _display_response(response)
+        last_input, last_output = _display_response(response)
+        self._record_tokens(conversation, last_input, last_output)
         self._resume_requests.clear()
+
+    def _model_name(self, conversation) -> str:
+        """Best-effort human-readable name of the conversation's model."""
+        model = getattr(conversation, "model", None)
+        for attr in ("model_id", "id", "name"):
+            value = getattr(model, attr, None)
+            if value:
+                return str(value)
+        return "model"
+
+    def _record_tokens(self, conversation, input_tokens: int, output_tokens: int) -> None:
+        """Add this prompt's tokens to the per-model session totals and show them."""
+        name = self._model_name(conversation)
+        totals = self._token_usage.setdefault(
+            name, {"in": 0, "out": 0, "prompts": 0}
+        )
+        totals["in"] += input_tokens
+        totals["out"] += output_tokens
+        totals["prompts"] += 1
+        self._display_token_line(name, input_tokens, output_tokens)
+
+    def _display_token_line(self, name: str, input_tokens: int, output_tokens: int) -> None:
+        """Print the per-prompt and per-model session token totals."""
+        totals = self._token_usage[name]
+        last = input_tokens + output_tokens
+        total = totals["in"] + totals["out"]
+        line = (
+            f"tokens · last prompt: {last} ({input_tokens} in, {output_tokens} out) · "
+            f"session: {total} ({totals['in']} in, {totals['out']} out) · "
+            f"model: {name}"
+        )
+        stream = sys.stdout
+        stream.write(_dim(line, _color_enabled(stream)))
+        stream.write("\n")
+        stream.flush()
+
+    def _print_token_totals(self) -> None:
+        """Show the per-model token totals accumulated this session."""
+        if not self._token_usage:
+            print("No token usage recorded yet.")
+            return
+        print("Token usage for this session:")
+        for name in self._token_usage:
+            totals = self._token_usage[name]
+            total = totals["in"] + totals["out"]
+            print(
+                f"  {name}: {total} tokens "
+                f"({totals['in']} in, {totals['out']} out) "
+                f"over {totals['prompts']} prompt(s)"
+            )
 
     def _parse_resources(self, prompt: str) -> tuple[str, list[str], list]:
         """Split ``@`` file references out of ``prompt``.
@@ -502,6 +594,7 @@ class IpyllmMagics(Magics):
                 "%llm --resume FILE.py\n"
                 "%llm --chain-limit N\n"
                 "%llm --config\n"
+                "%llm --tokens\n"
                 "%llm --save-config [FILE]\n"
                 "%llm --reset"
             )
@@ -554,6 +647,9 @@ class IpyllmMagics(Magics):
                 f"Config file: {source}"
             )
             return True
+        if command == "--tokens" and len(args) == 1:
+            self._print_token_totals()
+            return True
         if command == "--save-config" and len(args) in (1, 2):
             target = args[1] if len(args) == 2 else None
             self._save_config(target)
@@ -584,7 +680,7 @@ class IpyllmMagics(Magics):
             "`%llm --debug on|off`, "
             "`%llm --skills`, `%llm --save FILE.py|off`, "
             "`%llm --resume FILE.py`, `%llm --chain-limit N`, "
-            "`%llm --config`, `%llm --save-config [FILE]`, `%llm --reset`."
+            "`%llm --config`, `%llm --tokens`, `%llm --save-config [FILE]`, `%llm --reset`."
         )
 
     def _apply_config_file(self) -> None:

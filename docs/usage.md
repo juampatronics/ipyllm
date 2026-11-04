@@ -47,6 +47,35 @@ reasoning (thought) and the intermediate results of its tool calls are shown in
 dim text, while the final answer is shown in the normal foreground. When output
 is piped (or `NO_COLOR` is set) the styling is turned off and the text is plain.
 
+## Token usage
+
+After every prompt, `ipyllm` prints a dim line reporting the tokens used by
+that prompt and the running total for the session, both read from the model
+provider's usage via the `llm` Python API:
+
+```
+tokens · last prompt: 351 (327 in, 24 out) · session: 702 (654 in, 48 out) · model: gpt-4o
+```
+
+"last prompt" counts every model round that prompt triggered (a prompt that
+makes tool calls sums all of its rounds), and "session" is the cumulative total
+for that model in this IPython session. When you switch models with
+`%llm --model`, each model keeps its own running total. Review the per-model
+totals at any time with:
+
+```ipython
+%llm --tokens
+```
+
+```
+Token usage for this session:
+  gpt-4o: 702 tokens (654 in, 48 out) over 2 prompt(s)
+  claude: 120 tokens (110 in, 10 out) over 1 prompt(s)
+```
+
+Totals are kept in memory for the current IPython session and are not reset by
+`%llm --reset`. Providers that do not report usage show `0`.
+
 ## Diagnose a shell command
 
 Run a command inside `%%llm --run` to capture its output and ask the model for
@@ -254,6 +283,7 @@ with a clear error.
 | `%llm --resume FILE.py` | Execute a saved session in the current namespace and continue appending to it. |
 | `%llm --chain-limit N` | Set the maximum model/tool rounds per prompt (default: `10`). |
 | `%llm --config` | Show the effective model and approval setting. |
+| `%llm --tokens` | Show per-model token totals for this session. |
 | `%llm --reset` | Clear the current conversation. |
 
 Raise the limit for prompts where the model needs several tool interactions:
