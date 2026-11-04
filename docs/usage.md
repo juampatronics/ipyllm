@@ -337,3 +337,49 @@ shell. The approval prompt requires the exact response `yes`.
     or modify files, use the network, and change session objects. Approval is a
     review step, not a security boundary. Use trusted models/providers and do
     not expose secrets to a provider that should not receive them.
+
+## Configuration file (`.ipyllmrc`)
+
+The settings shown by `%llm --config` can be stored in a `.ipyllmrc` file. On
+startup the extension loads it automatically, searching the **current
+directory first**, then your **home directory** (`$HOME`), and falling back to
+built-in defaults when neither exists. The first file found is used; entries
+present in it override the defaults and any missing entries keep their
+defaults, so the file only needs to list the settings you want to change.
+
+```ini
+[ipyllm]
+model = ollama/llama3
+require_approval = on
+debug = off
+save_session = off
+chain_limit = 10
+```
+
+Recognized keys (all optional):
+
+| Key | Meaning | Accepted values |
+| --- | --- | --- |
+| `model` | Model ID or alias (as for `%llm --model`). | any model string |
+| `require_approval` | Ask before executing model-requested code. | `on` / `off` |
+| `debug` | Show IPython tracebacks for model-executed code. | `on` / `off` |
+| `save_session` | Session script to append to, or none. | a file path, `off`, or omit |
+| `chain_limit` | Maximum model/tool rounds per prompt. | positive integer |
+
+The `[ipyllm]` header is optional (a flat `key = value` file also works). Keys
+and booleans are case-insensitive. A `.ipyllmrc` in the current directory takes
+precedence over one in `$HOME`. Invalid or unrecognized entries are reported to
+stderr and skipped, so a problem in the file never prevents IPython from
+starting.
+
+Write the current settings to a file (default: `./.ipyllmrc`) with:
+
+```ipython
+%llm --save-config            # writes ./.ipyllmrc
+%llm --save-config ~/.ipyllmrc
+```
+
+`%llm --config` reports which file the settings were loaded from (or `defaults`).
+Session commands (`%llm --model`, `--approval`, `--debug`, `--chain-limit`)
+change the values for the current shell and can be persisted with
+`%llm --save-config`.

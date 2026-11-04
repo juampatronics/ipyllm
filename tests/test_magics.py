@@ -528,6 +528,127 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.assertIn("Explain this output.", conversation.prompt)
 
 
+class ConfigFileTests(unittest.TestCase):
+    """Cover ``.ipyllmrc`` discovery, partial loading, and saving."""
+
+    def setUp(self):
+        self.shell = InteractiveShell.instance()
+        self.workdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.workdir.cleanup)
+        self.home = tempfile.TemporaryDirectory()
+        self.addCleanup(self.home.cleanup)
+        self.old_cwd = os.getcwd()
+        self.addCleanup(os.chdir, self.old_cwd)
+        os.chdir(self.workdir.name)
+
+    def _new_magics(self):
+        with patch("ipyllm.magics.Path.home", return_value=Path(self.home.name)):
+            return IpyllmMagics(self.shell)
+
+    def test_config_in_current_directory_is_loaded(self):
+        (Path(self.workdir.name) / ".ipyllmrc").write_text(
+            "[ipyllm]\n"
+            "model = test-model\n"
+            "require_approval = on\n"
+            "debug = on\n"
+            "chain_limit = 25\n",
+            encoding="utf-8",
+        )
+        magics = self._new_magics()
+        self.assertEqual(magics._model_id, "test-model")
+        self.assertTrue(magics.require_approval)
+        self.assertTrue(magics.debug)
+        self.assertEqual(magics.chain_limit, 25)
+        self.assertEqual(magics._config_path, Path(self.workdir.name) / ".ipyllmrc")
+
+    def test_config_in_home_when_none_in_current_directory(self):
+        (Path(self.home.name) / ".ipyllmrc").write_text(
+            "[ipyllm]\nchain_limit = 7\n", encoding="utf-8"
+        )
+        magics = self._new_magics()
+        self.assertEqual(magics.chain_limit, 7)
+        self.assertFalse(magics.debug)  # missing entry keeps default
+
+    def test_current_directory_config_wins_over_home(self):
+        (Path(self.home.name) / ".ipyllmrc").write_text(
+            "[ipyllm]\nchain_limit = 3\n", encoding="utf-8"
+        )
+        (Path(self.workdir.name) / ".ipyllmrc").write_text(
+            "[ipyllm]\nchain_limit = 9\n", encoding="utf-8"
+        )
+        magics = self._new_magics()
+        self.assertEqual(magics.chain_limit, 9)
+
+    def test_flat_file_without_section_is_accepted(self):
+        (Path(self.workdir.name) / ".ipyllmrc").write_text(
+            "debug = on\n", encoding="utf-8"
+        )
+        magics = self._new_magics()
+        self.assertTrue(magics.debug)
+
+    def test_partial_config_uses_defaults_for_missing_entries(self):
+        (Path(self.workdir.name) / ".ipyllmrc").write_text(
+            "[ipyllm]\ndebug = on\n", encoding="utf-8"
+        )
+        magics = self._new_magics()
+        self.assertTrue(magics.debug)
+        self.assertIsNone(magics._model_id)
+        self.assertEqual(magics.chain_limit, 10)
+
+    def test_no_config_file_uses_defaults(self):
+        magics = self._new_magics()
+        self.assertIsNone(magics._config_path)
+        self.assertIsNone(magics._model_id)
+        self.assertEqual(magics.chain_limit, 10)
+        self.assertFalse(magics.require_approval)
+
+    def test_invalid_values_warn_and_fall_back_to_defaults(self):
+        (Path(self.workdir.name) / ".ipyllmrc").write_text(
+            "[ipyllm]\n"
+            "chain_limit = notanumber\n"
+            "require_approval = maybe\n"
+            "bogus_key = 1\n",
+            encoding="utf-8",
+        )
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            magics = self._new_magics()
+        self.assertEqual(magics.chain_limit, 10)
+        self.assertFalse(magics.require_approval)
+        reported = stderr.getvalue()
+        self.assertIn("chain_limit", reported)
+        self.assertIn("require_approval", reported)
+        self.assertIn("bogus_key", reported)
+
+    def test_save_config_writes_current_values_and_reloads(self):
+        magics = self._new_magics()
+        magics._model_id = "my-model"
+        magics.debug = True
+        magics.chain_limit = 42
+        with redirect_stdout(StringIO()):
+            self.assertTrue(magics._handle_command("--save-config"))
+
+        config_path = Path(self.workdir.name) / ".ipyllmrc"
+        self.assertTrue(config_path.is_file())
+        content = config_path.read_text(encoding="utf-8")
+        self.assertIn("model = my-model", content)
+        self.assertIn("debug = on", content)
+        self.assertIn("chain_limit = 42", content)
+
+        reloaded = self._new_magics()
+        self.assertEqual(reloaded._model_id, "my-model")
+        self.assertEqual(reloaded.chain_limit, 42)
+        self.assertTrue(reloaded.debug)
+
+    def test_save_config_to_explicit_path(self):
+        magics = self._new_magics()
+        magics.chain_limit = 5
+        target = Path(self.workdir.name) / "custom.rc"
+        with redirect_stdout(StringIO()):
+            self.assertTrue(magics._handle_command(f"--save-config {target}"))
+        self.assertIn("chain_limit = 5", target.read_text(encoding="utf-8"))
+
+
 class LastErrorTests(unittest.TestCase):
     """Cover ``%llm --last-error``: diagnose the most recent shell exception."""
 

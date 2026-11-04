@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import builtins
+import configparser
 import mimetypes
 import os
 import re
@@ -178,6 +179,71 @@ def _display_tool_result(tool, tool_call, tool_result) -> None:
     stream.flush()
 
 
+# --- .ipyllmrc config file ------------------------------------------------
+
+_CONFIG_FILE = ".ipyllmrc"
+_CONFIG_SECTION = "ipyllm"
+_CONFIG_KEYS = ("model", "require_approval", "debug", "save_session", "chain_limit")
+
+
+def _find_config_file() -> Path | None:
+    """Return the config file to use: current directory first, then ``$HOME``.
+
+    Returns ``None`` when neither location has a ``.ipyllmrc`` file.
+    """
+    for candidate in (Path.cwd() / _CONFIG_FILE, Path.home() / _CONFIG_FILE):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _read_config_values(path: Path) -> dict[str, str]:
+    """Parse ``path`` into a mapping of config keys to raw string values.
+
+    Accepts a ``[ipyllm]`` section, any single section, or a flat (no-header)
+    key/value file. Interpolation is disabled so model IDs and paths containing
+    ``%`` are kept literally.
+    """
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise UsageError(f"Cannot read config file {path}: {exc}") from exc
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read_string(content)
+    except configparser.MissingSectionHeaderError:
+        parser.read_string(f"[{_CONFIG_SECTION}]\n{content}")
+    except configparser.Error as exc:
+        raise UsageError(f"Cannot parse config file {path}: {exc}") from exc
+    if _CONFIG_SECTION in parser:
+        selected = parser[_CONFIG_SECTION]
+    elif parser.sections():
+        selected = parser[parser.sections()[0]]
+    else:
+        selected = parser.defaults()
+    return {
+        key: value for key, value in selected.items() if key not in ("DEFAULT", "__name__")
+    }
+
+
+def _parse_bool(value: str, key: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "on", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "off", "no", "n"}:
+        return False
+    raise ValueError(f"expected on or off, got {value!r}")
+
+
+def _format_config_file(values: dict[str, str]) -> str:
+    """Render config values as an ``.ipyllmrc`` document."""
+    lines = [f"[{_CONFIG_SECTION}]"]
+    for key in _CONFIG_KEYS:
+        if key in values:
+            lines.append(f"{key} = {values[key]}")
+    return "\n".join(lines) + "\n"
+
+
 @magics_class
 class IpyllmMagics(Magics):
     """Manage an LLM conversation with access to this IPython shell."""
@@ -225,14 +291,20 @@ class IpyllmMagics(Magics):
         self._resume_requests: list[str] = []
         self._recorder = SessionRecorder(shell)
         self._diagnostics = DiagnosticRunner(shell, self._ask)
+        self._config_path: Path | None = None
+        self._apply_config_file()
 
     @line_cell_magic
     def llm(self, line: str, cell: str | None = None) -> None:
         """Ask the configured model a question, optionally as a cell magic.
 
         Use ``%llm --model MODEL``, ``%llm --approval on|off``,
-        ``%llm --debug on|off``, ``%llm --skills``, ``%llm --config``, and
-        ``%llm --reset`` to manage this session. In cell mode use
+        ``%llm --debug on|off``, ``%llm --skills``, ``%llm --config``,
+        ``%llm --save-config [FILE]``, and ``%llm --reset`` to manage this
+        session. Settings can be stored in a ``.ipyllmrc`` file (in the
+        current directory or ``$HOME``), which is loaded automatically at
+        startup; ``%llm --save-config`` writes the current settings to one.
+        In cell mode use
         ``%%llm --run`` to capture a shell command for diagnosis. Use
         ``%llm --last-error`` to have the model diagnose the most recent
         exception in this session. Start a
@@ -430,6 +502,7 @@ class IpyllmMagics(Magics):
                 "%llm --resume FILE.py\n"
                 "%llm --chain-limit N\n"
                 "%llm --config\n"
+                "%llm --save-config [FILE]\n"
                 "%llm --reset"
             )
             return True
@@ -471,13 +544,19 @@ class IpyllmMagics(Magics):
             model_id = self._model_id or self.model or "llm default"
             approval = self._current_approval_policy()
             save_path = self._recorder.save_path or "off"
+            source = self._config_path or "defaults"
             print(
                 f"Model: {model_id}\n"
                 f"Require execution approval: {approval}\n"
                 f"Show execution tracebacks: {self.debug}\n"
                 f"Save session to: {save_path}\n"
-                f"Chain limit: {self.chain_limit}"
+                f"Chain limit: {self.chain_limit}\n"
+                f"Config file: {source}"
             )
+            return True
+        if command == "--save-config" and len(args) in (1, 2):
+            target = args[1] if len(args) == 2 else None
+            self._save_config(target)
             return True
         if command == "--model" and len(args) == 2:
             llm.get_model(args[1])
@@ -505,8 +584,80 @@ class IpyllmMagics(Magics):
             "`%llm --debug on|off`, "
             "`%llm --skills`, `%llm --save FILE.py|off`, "
             "`%llm --resume FILE.py`, `%llm --chain-limit N`, "
-            "`%llm --config`, `%llm --reset`."
+            "`%llm --config`, `%llm --save-config [FILE]`, `%llm --reset`."
         )
+
+    def _apply_config_file(self) -> None:
+        """Load ``.ipyllmrc`` (current dir, then ``$HOME``) and apply values.
+
+        Present entries override the defaults; missing entries keep their
+        defaults. Problems are reported to the user but never prevent the
+        extension from loading.
+        """
+        path = _find_config_file()
+        if path is None:
+            return
+        self._config_path = path
+        try:
+            values = _read_config_values(path)
+        except UsageError as exc:
+            print(f"Warning: {exc}; using defaults.", file=sys.stderr)
+            return
+        for key, value in values.items():
+            self._apply_config_value(key, value)
+
+    def _apply_config_value(self, key: str, value: str) -> None:
+        """Apply a single config entry, reporting (not raising) on bad values."""
+        try:
+            if key == "model":
+                value = value.strip()
+                if value:
+                    self._model_id = value
+                    self._conversation = None
+            elif key == "require_approval":
+                self.require_approval = _parse_bool(value, key)
+            elif key == "debug":
+                self.debug = _parse_bool(value, key)
+            elif key == "save_session":
+                value = value.strip()
+                if value and value.lower() != "off":
+                    self._recorder.enable(value)
+            elif key == "chain_limit":
+                limit = int(value)
+                if limit < 1:
+                    raise ValueError("must be a positive integer")
+                self.chain_limit = limit
+            else:
+                print(
+                    f"Warning: ignoring unknown config key {key!r} in .ipyllmrc.",
+                    file=sys.stderr,
+                )
+        except (ValueError, UsageError) as exc:
+            print(
+                f"Warning: invalid {key!r} in .ipyllmrc ({exc}); using default.",
+                file=sys.stderr,
+            )
+
+    def _save_config(self, filename: str | None) -> None:
+        """Write the current config values to ``.ipyllmrc`` (or ``filename``)."""
+        path = (
+            Path(filename).expanduser()
+            if filename
+            else Path.cwd() / _CONFIG_FILE
+        )
+        values = {
+            "model": self._model_id or (self.model or ""),
+            "require_approval": "on" if self._current_approval_policy() else "off",
+            "debug": "on" if self.debug else "off",
+            "save_session": str(self._recorder.save_path or "off"),
+            "chain_limit": str(self.chain_limit),
+        }
+        try:
+            path.write_text(_format_config_file(values), encoding="utf-8")
+        except OSError as exc:
+            raise UsageError(f"Cannot write config file {path}: {exc}") from exc
+        self._config_path = path
+        print(f"Saved config to {path}.")
 
     def _discover_skills(self) -> SkillCatalog:
         return discover_skills(self.skill_paths)
