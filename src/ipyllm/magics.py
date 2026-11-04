@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import builtins
-import configparser
-import mimetypes
 import os
 import re
 import shlex
@@ -28,8 +26,16 @@ from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.magic import Magics, line_cell_magic, magics_class
 from traitlets import Bool, Integer, List, Unicode
 
+from .config import (
+    CONFIG_FILE,
+    find_config_file,
+    format_config_file,
+    parse_bool,
+    read_config_values,
+)
 from .diagnostics import DiagnosticRunner
 from .recorder import SessionRecorder
+from .resources import parse_resources
 from .skills import MAX_SKILL_CHARS, Skill, SkillCatalog, SkillError, discover_skills
 
 _SYSTEM_PROMPT = """\
@@ -47,10 +53,6 @@ _MAX_VARIABLES = 80
 _MAX_HISTORY_ENTRIES = 30
 _MAX_CONTEXT_CHARS = 12_000
 _MAX_REPR_CHARS = 4_000
-_MAX_FILE_CONTENT_CHARS = 12_000
-_MAX_DIR_FILES = 100
-_MEDIA_PREFIXES = ("image/", "audio/", "video/")
-_MEDIA_TYPES = {"application/pdf"}
 _HIDDEN_NAMES = {
     "In",
     "Out",
@@ -60,51 +62,6 @@ _HIDDEN_NAMES = {
     "quit",
 }
 _SKILL_SELECTOR = re.compile(r"^/([^\s]+)(?:\s+|$)")
-_AT_REFERENCE = re.compile(r"@([^\s@]+)")
-
-
-def _list_dir_files(root: Path) -> tuple[list[Path], bool]:
-    """List regular files under ``root`` breadth-first, skipping hidden
-    entries and capping the total at ``_MAX_DIR_FILES``."""
-    files: list[Path] = []
-    queue: list[Path] = [root]
-    index = 0
-    while index < len(queue) and len(files) < _MAX_DIR_FILES:
-        directory = queue[index]
-        index += 1
-        try:
-            entries = sorted(directory.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            if entry.name.startswith("."):
-                continue
-            if entry.is_dir():
-                queue.append(entry)
-            elif entry.is_file():
-                files.append(entry)
-                if len(files) >= _MAX_DIR_FILES:
-                    break
-    return files, len(files) >= _MAX_DIR_FILES
-
-
-def _detect_type(path: Path) -> str | None:
-    try:
-        from llm.utils import mimetype_from_path
-
-        detected = mimetype_from_path(str(path))
-        if detected:
-            return detected
-    except Exception:
-        pass
-    return mimetypes.guess_type(path.name)[0]
-
-
-def _display_name(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(Path.cwd()))
-    except ValueError:
-        return str(path)
 
 
 # --- Readable output styling ---------------------------------------------
@@ -217,71 +174,6 @@ def _display_tool_result(tool, tool_call, tool_result) -> None:
     stream = sys.stdout
     stream.write(_dim(line + "\n", _color_enabled(stream)))
     stream.flush()
-
-
-# --- .ipyllmrc config file ------------------------------------------------
-
-_CONFIG_FILE = ".ipyllmrc"
-_CONFIG_SECTION = "ipyllm"
-_CONFIG_KEYS = ("model", "require_approval", "debug", "save_session", "chain_limit")
-
-
-def _find_config_file() -> Path | None:
-    """Return the config file to use: current directory first, then ``$HOME``.
-
-    Returns ``None`` when neither location has a ``.ipyllmrc`` file.
-    """
-    for candidate in (Path.cwd() / _CONFIG_FILE, Path.home() / _CONFIG_FILE):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-def _read_config_values(path: Path) -> dict[str, str]:
-    """Parse ``path`` into a mapping of config keys to raw string values.
-
-    Accepts a ``[ipyllm]`` section, any single section, or a flat (no-header)
-    key/value file. Interpolation is disabled so model IDs and paths containing
-    ``%`` are kept literally.
-    """
-    try:
-        content = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise UsageError(f"Cannot read config file {path}: {exc}") from exc
-    parser = configparser.ConfigParser(interpolation=None)
-    try:
-        parser.read_string(content)
-    except configparser.MissingSectionHeaderError:
-        parser.read_string(f"[{_CONFIG_SECTION}]\n{content}")
-    except configparser.Error as exc:
-        raise UsageError(f"Cannot parse config file {path}: {exc}") from exc
-    if _CONFIG_SECTION in parser:
-        selected = parser[_CONFIG_SECTION]
-    elif parser.sections():
-        selected = parser[parser.sections()[0]]
-    else:
-        selected = parser.defaults()
-    return {
-        key: value for key, value in selected.items() if key not in ("DEFAULT", "__name__")
-    }
-
-
-def _parse_bool(value: str, key: str) -> bool:
-    normalized = value.strip().lower()
-    if normalized in {"1", "true", "on", "yes", "y"}:
-        return True
-    if normalized in {"0", "false", "off", "no", "n"}:
-        return False
-    raise ValueError(f"expected on or off, got {value!r}")
-
-
-def _format_config_file(values: dict[str, str]) -> str:
-    """Render config values as an ``.ipyllmrc`` document."""
-    lines = [f"[{_CONFIG_SECTION}]"]
-    for key in _CONFIG_KEYS:
-        if key in values:
-            lines.append(f"{key} = {values[key]}")
-    return "\n".join(lines) + "\n"
 
 
 @magics_class
@@ -454,104 +346,8 @@ class IpyllmMagics(Magics):
             )
 
     def _parse_resources(self, prompt: str) -> tuple[str, list[str], list]:
-        """Split ``@`` file references out of ``prompt``.
-
-        Returns the cleaned prompt (each resolved reference replaced by a
-        readable marker), a list of text-content fragments, and a list of
-        ``llm.Attachment``. References that are not a word-leading ``@`` (for
-        example an email address) or that do not resolve to an existing file
-        or directory are left in the prompt unchanged.
-        """
-        fragments: list[str] = []
-        attachments: list = []
-        seen: set[Path] = set()
-        parts: list[str] = []
-        last = 0
-        for match in _AT_REFERENCE.finditer(prompt):
-            start, end = match.span()
-            if start == 0 or prompt[start - 1].isspace():
-                marker, frag, atts = self._resolve_reference(
-                    match.group(1), seen
-                )
-                parts.append(prompt[last:start])
-                parts.append(marker)
-                fragments.extend(frag)
-                attachments.extend(atts)
-            else:
-                parts.append(prompt[last:end])
-            last = end
-        parts.append(prompt[last:])
-        return "".join(parts), fragments, attachments
-
-    def _resolve_reference(
-        self, reference: str, seen: set[Path]
-    ) -> tuple[str, list[str], list]:
-        path = Path(reference).expanduser()
-        if not path.is_absolute():
-            path = Path.cwd() / path
-
-        if path.is_dir():
-            files, truncated = _list_dir_files(path)
-            if not files:
-                return f"[directory: {_display_name(path)} (no files)]", [], []
-            count = f"first {len(files)} files" if truncated else f"{len(files)} files"
-            marker = f"[directory: {_display_name(path)} ({count})]"
-        elif path.is_file():
-            files = [path]
-            marker = f"[file: {_display_name(path)}]"
-        else:
-            return f"@{reference}", [], []
-
-        fragments: list[str] = []
-        attachments: list = []
-        for file in files:
-            resolved = file.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            if self._is_media_file(file):
-                attachments.append(llm.Attachment(path=str(file)))
-            else:
-                content = self._read_text_resource(file)
-                fragments.append(
-                    f"[file: {_display_name(file)}]\n{content}"
-                )
-        return marker, fragments, attachments
-
-    def _is_media_file(self, path: Path) -> bool:
-        detected = _detect_type(path)
-        if detected is None:
-            return False
-        return detected.startswith(_MEDIA_PREFIXES) or detected in _MEDIA_TYPES
-
-    def _read_text_resource(self, path: Path) -> str:
-        detected = _detect_type(path) or ""
-        is_known_text = detected.startswith("text/")
-        try:
-            with path.open("rb") as handle:
-                raw = handle.read(_MAX_FILE_CONTENT_CHARS * 4 + 4)
-        except OSError as exc:
-            raise UsageError(f"Cannot read {path}: {exc}") from exc
-        if b"\x00" in raw[:8192]:
-            raise UsageError(
-                f"{path} is not a text file and this model cannot attach it. "
-                "Use an image, audio, video, or PDF, or convert it to a text "
-                "file."
-            )
-        try:
-            content = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            if is_known_text:
-                content = raw.decode("utf-8", errors="ignore")
-            else:
-                raise UsageError(
-                    f"{path} is not a text file and this model cannot attach it. "
-                    "Use an image, audio, video, or PDF, or convert it to a "
-                    "text file."
-                ) from None
-        if len(content) > _MAX_FILE_CONTENT_CHARS:
-            content = content[:_MAX_FILE_CONTENT_CHARS]
-        return content
+        """Resolve local file references in a prompt."""
+        return parse_resources(prompt)
 
     def _resume_request_context(self) -> str:
         if not self._resume_requests:
@@ -616,8 +412,7 @@ class IpyllmMagics(Magics):
                 self._recorder.enable(args[1])
             return True
         if command == "--resume" and len(args) == 2:
-            self._resume_requests = self._recorder.resume(args[1])
-            self._conversation = None
+            self._resume_session(args[1])
             return True
         if command == "--chain-limit" and len(args) == 2:
             try:
@@ -656,8 +451,7 @@ class IpyllmMagics(Magics):
             return True
         if command == "--model" and len(args) == 2:
             llm.get_model(args[1])
-            self._model_id = args[1]
-            self._conversation = None
+            self._set_model_id(args[1])
             print(f"Using LLM model {args[1]!r}. Conversation reset.")
             return True
         if command == "--approval" and len(args) == 2:
@@ -690,12 +484,12 @@ class IpyllmMagics(Magics):
         defaults. Problems are reported to the user but never prevent the
         extension from loading.
         """
-        path = _find_config_file()
+        path = find_config_file()
         if path is None:
             return
         self._config_path = path
         try:
-            values = _read_config_values(path)
+            values = read_config_values(path)
         except UsageError as exc:
             print(f"Warning: {exc}; using defaults.", file=sys.stderr)
             return
@@ -708,12 +502,11 @@ class IpyllmMagics(Magics):
             if key == "model":
                 value = value.strip()
                 if value:
-                    self._model_id = value
-                    self._conversation = None
+                    self._set_model_id(value)
             elif key == "require_approval":
-                self.require_approval = _parse_bool(value, key)
+                self.require_approval = parse_bool(value, key)
             elif key == "debug":
-                self.debug = _parse_bool(value, key)
+                self.debug = parse_bool(value, key)
             elif key == "save_session":
                 value = value.strip()
                 if value and value.lower() != "off":
@@ -739,7 +532,7 @@ class IpyllmMagics(Magics):
         path = (
             Path(filename).expanduser()
             if filename
-            else Path.cwd() / _CONFIG_FILE
+            else Path.cwd() / CONFIG_FILE
         )
         values = {
             "model": self._model_id or (self.model or ""),
@@ -749,7 +542,7 @@ class IpyllmMagics(Magics):
             "chain_limit": str(self.chain_limit),
         }
         try:
-            path.write_text(_format_config_file(values), encoding="utf-8")
+            path.write_text(format_config_file(values), encoding="utf-8")
         except OSError as exc:
             raise UsageError(f"Cannot write config file {path}: {exc}") from exc
         self._config_path = path
@@ -822,6 +615,18 @@ class IpyllmMagics(Magics):
                 chain_limit=self.chain_limit,
             )
         return self._conversation
+
+    def _invalidate_conversation(self) -> None:
+        self._conversation = None
+
+    def _set_model_id(self, model_id: str) -> None:
+        self._model_id = model_id
+        self._invalidate_conversation()
+
+    def _resume_session(self, filename: str) -> None:
+        requests = self._recorder.resume(filename)
+        self._invalidate_conversation()
+        self._resume_requests = requests
 
     def _current_approval_policy(self) -> bool:
         if self._approval_override is not None:
@@ -925,4 +730,4 @@ class IpyllmMagics(Magics):
 
     def reset(self) -> None:
         """Clear conversation state without changing model or approval settings."""
-        self._conversation = None
+        self._invalidate_conversation()

@@ -431,6 +431,7 @@ class IpyllmMagicsTests(unittest.TestCase):
     def test_resume_replays_script_and_appends_new_activity(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "saved session.py"
+            previous_conversation = self.magics._get_conversation()
             missing = object()
             previous_file = self.shell.user_ns.get("__file__", missing)
             if previous_file is missing:
@@ -449,6 +450,8 @@ class IpyllmMagicsTests(unittest.TestCase):
             with redirect_stdout(output):
                 self.magics._handle_command(f'--resume "{path}"')
 
+            self.assertIsNone(self.magics._conversation)
+            self.assertIsNotNone(previous_conversation)
             self.assertEqual(self.shell.user_ns["baseline_value"], 41)
             self.assertEqual(self.magics._recorder.save_path, path)
             self.assertEqual(
@@ -456,7 +459,6 @@ class IpyllmMagicsTests(unittest.TestCase):
             )
             self.assertEqual(self.shell.user_ns["__file__"], str(path))
 
-            self.magics._conversation = FakeConversation()
             with redirect_stdout(output):
                 self.magics.llm("Add one to the baseline.")
             prompt = self.magics._conversation.prompt
@@ -548,11 +550,54 @@ class IpyllmMagicsTests(unittest.TestCase):
 
     def test_reset_discards_conversation(self):
         self.magics._get_conversation()
+        self.magics.model = "configured-model"
+        self.magics.require_approval = True
+        self.magics._approval_override = False
+        self.magics.debug = True
+        self.magics.chain_limit = 17
+        self.magics._resume_requests = ["saved request"]
+        self.magics._token_usage["fake-model"] = {
+            "in": 3,
+            "out": 4,
+            "prompts": 1,
+        }
         self.assertIsNotNone(self.magics._conversation)
 
-        self.magics.reset()
+        with redirect_stdout(StringIO()):
+            self.magics.llm("--reset")
 
         self.assertIsNone(self.magics._conversation)
+        self.assertEqual(self.magics.model, "configured-model")
+        self.assertTrue(self.magics.require_approval)
+        self.assertFalse(self.magics._approval_override)
+        self.assertTrue(self.magics.debug)
+        self.assertEqual(self.magics.chain_limit, 17)
+        self.assertEqual(self.magics._resume_requests, ["saved request"])
+        self.assertEqual(
+            self.magics._token_usage["fake-model"],
+            {"in": 3, "out": 4, "prompts": 1},
+        )
+
+    def test_changing_model_invalidates_conversation(self):
+        previous_conversation = self.magics._get_conversation()
+
+        with redirect_stdout(StringIO()):
+            self.magics._handle_command("--model another-model")
+
+        self.assertEqual(self.magics._model_id, "another-model")
+        self.assertIsNone(self.magics._conversation)
+        new_conversation = self.magics._get_conversation()
+        self.assertIsNot(new_conversation, previous_conversation)
+        self.get_model.assert_called_with("another-model")
+
+    def test_failed_response_keeps_resume_context(self):
+        conversation = self.magics._get_conversation()
+        self.magics._resume_requests = ["saved request"]
+        with patch.object(conversation, "chain", side_effect=RuntimeError("failed")):
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                self.magics.llm("new request")
+
+        self.assertEqual(self.magics._resume_requests, ["saved request"])
 
     def test_run_cell_captures_command_output_for_diagnosis(self):
         conversation = FakeConversation()
