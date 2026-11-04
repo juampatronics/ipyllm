@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,13 +29,16 @@ from IPython.core.interactiveshell import InteractiveShell
 
 from ipyllm import load_ipython_extension, unload_ipython_extension
 from ipyllm.diagnostics import _truncate_command_output
-from ipyllm.magics import IpyllmMagics
+from ipyllm.magics import IpyllmMagics, _display_response, _display_tool_result
 from ipyllm.recorder import _read_saved_requests
 
 
 class FakeResponse:
     def text(self):
         return "model response"
+
+    def stream_events(self):
+        yield SimpleNamespace(type="text", chunk="model response")
 
 
 class FakeConversation:
@@ -57,6 +60,30 @@ class FakeModel:
     def conversation(self, **kwargs):
         self.created_conversation = FakeConversation(**kwargs)
         return self.created_conversation
+
+
+@contextmanager
+def _color_state(on: bool):
+    """Force deterministic color detection by controlling NO_COLOR/FORCE_COLOR."""
+    saved = {
+        key: os.environ.get(key)
+        for key in ("NO_COLOR", "FORCE_COLOR")
+        if key in os.environ
+    }
+    os.environ.pop("NO_COLOR", None)
+    os.environ.pop("FORCE_COLOR", None)
+    if on:
+        os.environ["FORCE_COLOR"] = "1"
+    else:
+        os.environ["NO_COLOR"] = "1"
+    try:
+        yield
+    finally:
+        os.environ.pop("NO_COLOR", None)
+        os.environ.pop("FORCE_COLOR", None)
+        for key, value in saved.items():
+            if value is not None:
+                os.environ[key] = value
 
 
 class IpyllmMagicsTests(unittest.TestCase):
@@ -205,6 +232,59 @@ class IpyllmMagicsTests(unittest.TestCase):
     def test_help_command_does_not_send_a_prompt(self):
         self.assertTrue(self.magics._handle_command("--help"))
         self.assertIsNone(self.magics._conversation)
+
+    def test_response_display_dims_reasoning_not_answer(self):
+        class ReasoningResponse:
+            def stream_events(self):
+                yield SimpleNamespace(type="reasoning", chunk="thinking about it")
+                yield SimpleNamespace(type="text", chunk="the final answer")
+
+        stdout = StringIO()
+        with redirect_stdout(stdout), _color_state(True):
+            _display_response(ReasoningResponse())
+
+        output = stdout.getvalue()
+        self.assertIn("\x1b[2mthinking about it\x1b[0m", output)
+        self.assertIn("the final answer", output)
+        self.assertNotIn("\x1b[2mthe final answer", output)
+
+    def test_response_display_plain_when_color_disabled(self):
+        class PlainResponse:
+            def stream_events(self):
+                yield SimpleNamespace(type="reasoning", chunk="thinking")
+                yield SimpleNamespace(type="text", chunk="the answer")
+
+        stdout = StringIO()
+        with redirect_stdout(stdout), _color_state(False):
+            _display_response(PlainResponse())
+
+        output = stdout.getvalue()
+        self.assertNotIn("\x1b[2m", output)
+        self.assertIn("thinking", output)
+        self.assertIn("the answer", output)
+
+    def test_tool_result_is_shown_dim(self):
+        stdout = StringIO()
+        tool_call = SimpleNamespace(name="execute_code")
+        tool_result = SimpleNamespace(output="Execution completed successfully.")
+        with redirect_stdout(stdout), _color_state(True):
+            _display_tool_result(None, tool_call, tool_result)
+
+        output = stdout.getvalue()
+        self.assertIn("execute_code", output)
+        self.assertIn("Execution completed successfully.", output)
+        self.assertIn("\x1b[2m", output)
+
+    def test_tool_result_long_output_is_truncated(self):
+        stdout = StringIO()
+        tool_call = SimpleNamespace(name="get_history")
+        tool_result = SimpleNamespace(output="x" * 1000)
+        with redirect_stdout(stdout), _color_state(False):
+            _display_tool_result(None, tool_call, tool_result)
+
+        output = stdout.getvalue()
+        self.assertIn("…", output)
+        self.assertLess(output.count("x"), 1000)
 
     def test_save_records_requests_as_comments_and_executed_code(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

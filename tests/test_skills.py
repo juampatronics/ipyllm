@@ -17,6 +17,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from IPython.core.error import UsageError
@@ -207,6 +208,9 @@ class FakeConversation:
 class FakeResponse:
     def text(self):
         return "answer"
+
+    def stream_events(self):
+        yield SimpleNamespace(type="text", chunk="answer")
 
 
 if __name__ == "__main__":

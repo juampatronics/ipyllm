@@ -42,6 +42,11 @@ context through tools:
 - `execute_code` runs code in the active shell, allowing it to use live objects
   and display plots.
 
+For readability, the model's working is styled distinctly from its answer: its
+reasoning (thought) and the intermediate results of its tool calls are shown in
+dim text, while the final answer is shown in the normal foreground. When output
+is piped (or `NO_COLOR` is set) the styling is turned off and the text is plain.
+
 ## Diagnose a shell command
 
 Run a command inside `%%llm --run` to capture its output and ask the model for

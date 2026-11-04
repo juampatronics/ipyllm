@@ -14,8 +14,10 @@
 
 import builtins
 import mimetypes
+import os
 import re
 import shlex
+import sys
 from itertools import islice
 from pathlib import Path
 
@@ -102,6 +104,78 @@ def _display_name(path: Path) -> str:
         return str(path.resolve().relative_to(Path.cwd()))
     except ValueError:
         return str(path)
+
+
+# --- Readable output styling ---------------------------------------------
+
+_ANSI_DIM = "\x1b[2m"
+_ANSI_RESET = "\x1b[0m"
+_DISPLAY_RESULT_CHARS = 400
+
+
+def _color_enabled(stream) -> bool:
+    """Whether ANSI styling should be emitted on ``stream``."""
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    if os.environ.get("FORCE_COLOR") is not None:
+        return True
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def _dim(text: str, enabled: bool) -> str:
+    """Wrap ``text`` in dim styling, or return it unchanged when disabled."""
+    if not enabled:
+        return text
+    return f"{_ANSI_DIM}{text}{_ANSI_RESET}"
+
+
+def _truncate_display(text: str, limit: int = _DISPLAY_RESULT_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
+def _display_response(response) -> None:
+    """Print a model response with readable styling.
+
+    The model's answer text is written in the normal foreground while its
+    reasoning (thought) is dimmed. Intermediate tool results are rendered by
+    ``_display_tool_result``. When color is disabled (output is piped or
+    ``NO_COLOR`` is set) everything is printed as plain text.
+    """
+    stream = sys.stdout
+    dim = _color_enabled(stream)
+    for event in response.stream_events():
+        chunk = getattr(event, "chunk", "") or ""
+        if not chunk:
+            continue
+        etype = getattr(event, "type", None)
+        if etype == "reasoning":
+            stream.write(_dim(chunk, dim))
+        elif etype == "text":
+            stream.write(chunk)
+        # tool_call_* / tool_result events are rendered by _display_tool_result.
+        stream.flush()
+    stream.write("\n")
+    stream.flush()
+
+
+def _display_tool_result(tool, tool_call, tool_result) -> None:
+    """Show an intermediate tool result in dim text.
+
+    Wired in as the ``after_call`` callback so each result appears dim,
+    between the answer text that precedes and follows it.
+    """
+    output = str(tool_result.output or "").strip()
+    line = f"· {tool_call.name}"
+    if output:
+        line += f": {_truncate_display(output)}"
+    stream = sys.stdout
+    stream.write(_dim(line + "\n", _color_enabled(stream)))
+    stream.flush()
 
 
 @magics_class
@@ -212,7 +286,7 @@ class IpyllmMagics(Magics):
             attachments=attachments or None,
             chain_limit=self.chain_limit,
         )
-        print(response.text())
+        _display_response(response)
         self._resume_requests.clear()
 
     def _parse_resources(self, prompt: str) -> tuple[str, list[str], list]:
@@ -497,6 +571,7 @@ class IpyllmMagics(Magics):
                     self.execute_code,
                 ],
                 before_call=self._before_tool_call,
+                after_call=_display_tool_result,
                 chain_limit=self.chain_limit,
             )
         return self._conversation
