@@ -196,7 +196,11 @@ class IpyllmMagicsTests(unittest.TestCase):
         with self.assertRaises(UsageError):
             self.magics._handle_command("--debug sometimes")
 
-    def test_variable_inspection_is_bounded(self):
+    def test_describe_object_unknown_variable(self):
+        response = self.magics.describe_object("does_not_exist")
+        self.assertIn("No visible user variable", response)
+
+    def test_describe_object_fallback_is_bounded(self):
         class LargeRepresentation:
             def __repr__(self):
                 return "x" * 10_000
@@ -204,13 +208,59 @@ class IpyllmMagicsTests(unittest.TestCase):
         self.shell.user_ns["large_test_value"] = LargeRepresentation()
         self.addCleanup(self.shell.user_ns.pop, "large_test_value", None)
 
-        response = self.magics.inspect_variable("large_test_value")
-        self.assertEqual(
-            len(response),
-            4_000
-            + len("large_test_value: LargeRepresentation\n")
-            + len("... (truncated)"),
+        response = self.magics.describe_object("large_test_value")
+        self.assertIn("LargeRepresentation", response)
+        self.assertLess(len(response), 5_000)
+
+    def test_describe_object_progressive_numpy(self):
+        import numpy as np
+
+        self.shell.user_ns["array_test"] = np.arange(24.0).reshape(4, 6)
+        self.addCleanup(self.shell.user_ns.pop, "array_test", None)
+
+        summary = self.magics.describe_object("array_test")
+        detail = self.magics.describe_object("array_test", detail="detail")
+        full = self.magics.describe_object("array_test", detail="full")
+
+        self.assertIn("shape=[4, 6]", summary)
+        self.assertNotIn("stats:", summary)
+        self.assertIn("stats:", detail)
+        self.assertIn("sample:", full)
+        self.assertGreaterEqual(len(detail), len(summary))
+        self.assertGreaterEqual(len(full), len(detail))
+
+    def test_describe_object_pandas_float_stats(self):
+        import pandas as pd
+
+        self.shell.user_ns["frame_test"] = pd.DataFrame(
+            {"x": [1.0, 2.0, 3.0, 100.0], "y": [1.0, 2.0, None, 4.0]}
         )
+        self.addCleanup(self.shell.user_ns.pop, "frame_test", None)
+
+        summary = self.magics.describe_object("frame_test")
+        detail = self.magics.describe_object("frame_test", detail="detail")
+
+        self.assertIn("DataFrame shape=(4, 2)", summary)
+        self.assertNotIn("mean=", summary)
+        self.assertIn("mean=", detail)
+        self.assertIn("outlier_fence=", detail)
+        self.assertIn("missing=1", detail)
+
+    def test_describe_object_invalid_detail_falls_back(self):
+        self.shell.user_ns["scalar_test"] = 3.5
+        self.addCleanup(self.shell.user_ns.pop, "scalar_test", None)
+
+        response = self.magics.describe_object("scalar_test", detail="nonsense")
+        self.assertIn("float", response)
+
+    def test_describe_object_is_registered_tool(self):
+        self.magics.llm("hello")
+        tools = {
+            tool.__name__
+            for tool in self.fake_model.created_conversation.options["tools"]
+        }
+        self.assertIn("describe_object", tools)
+        self.assertNotIn("inspect_variable", tools)
 
     def test_history_range_is_read_and_bounded(self):
         history = self.shell.history_manager

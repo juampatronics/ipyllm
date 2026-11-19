@@ -36,7 +36,14 @@ starts with variable names and Python types only, and can request additional
 context through tools:
 
 - `list_variables` lists visible names and types.
-- `inspect_variable` returns a bounded representation of one variable.
+- `describe_object` returns bounded, type-specific metadata for one variable.
+  It starts compact (`detail='summary'`) and is progressively expandable with
+  `detail='detail'` (per-column breakdowns, missing values, statistics such as
+  mean/std/median and 1.5×IQR outlier fences for float data) or
+  `detail='full'` (sample values, a head preview, or source code). NumPy
+  arrays, pandas objects, PyTorch tensors and modules, matplotlib figures,
+  scikit-learn estimators, and Python functions each get a tailored
+  description; the output never grows with the object's size.
 - `get_history` reads recent inputs, or a requested IPython history range such
   as `1-5`.
 - `execute_code` runs code in the active shell, allowing it to use live objects
@@ -158,7 +165,7 @@ for example `header` and `config`. If you already use `IPython.embed()`,
 load the extension inside the shell with `%load_ext ipyllm` instead.
 
 Because the shell runs in the same process and frame, `ipyllm`'s tools
-(`list_variables`, `inspect_variable`, `get_history`, `execute_code`) operate
+(`list_variables`, `describe_object`, `get_history`, `execute_code`) operate
 directly on the local names at that point in the code. You can ask the model
 to trace how an unexpected value was produced, check state of earlier
 variables, or run fix-and-retry experiments on the live objects before
