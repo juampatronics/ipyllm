@@ -406,6 +406,39 @@ class IpyllmMagicsTests(unittest.TestCase):
             {"in": 17, "out": 8, "prompts": 2},
         )
 
+    def test_chain_limit_error_shows_bounded_message(self):
+        conversation = self.magics._get_conversation()
+
+        class LimitResponse:
+            def stream_events(self):
+                yield SimpleNamespace(type="text", chunk="partial work so far")
+                raise ValueError("Chain limit of 10 exceeded.")
+
+        conversation.chain = lambda *args, **kwargs: LimitResponse()
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            self.magics.llm("hard prompt")
+        output = stdout.getvalue()
+        self.assertIn("partial work so far", output)
+        self.assertIn("Chain limit reached", output)
+        self.assertIn("%llm --chain-limit", output)
+        self.assertNotIn("Traceback", output)
+        self.assertNotIn("last prompt:", output)
+        self.assertEqual(self.magics._token_usage, {})
+
+    def test_other_value_errors_still_propagate(self):
+        conversation = self.magics._get_conversation()
+
+        class OtherError:
+            def stream_events(self):
+                yield SimpleNamespace(type="text", chunk="partial")
+                raise ValueError("unrelated provider failure")
+
+        conversation.chain = lambda *args, **kwargs: OtherError()
+        with self.assertRaises(ValueError):
+            with redirect_stdout(StringIO()):
+                self.magics.llm("prompt")
+
     def test_tokens_command_lists_per_model_totals(self):
         conversation = self.magics._get_conversation()
         conversation.next_tokens = (10, 5)
