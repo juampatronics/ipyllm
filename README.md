@@ -1,14 +1,14 @@
 <div align="center">
   <img src="https://juampatronics.com/images/ipyllm_logo.svg" alt="Synaptic Prompt Logo" width="150"/>
   <br/>
-  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml?query=job%3Abuild" alt="Build (source code)">
-    <img src="https://img.shields.io/badge/build-source%20code?color=blue" alt="Build (source code)"/>
+  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml" alt="Build (source code)">
+    <img src="https://img.shields.io/github/actions/workflow/status/juampatronics/ipyllm/ci.yml?job=build&label=build" alt="Build (source code)"/>
   </a>
-  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml?query=job%3Adocs" alt="Docs (MkDocs)">
-    <img src="https://img.shields.io/badge/docs-MkDocs?color=green" alt="Docs (MkDocs)"/>
+  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml" alt="Docs (MkDocs)">
+    <img src="https://img.shields.io/github/actions/workflow/status/juampatronics/ipyllm/ci.yml?job=docs&label=docs" alt="Docs (MkDocs)"/>
   </a>
-  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml?query=job%3Atest" alt="Tests (pytest)">
-    <img src="https://img.shields.io/badge/test-pytest?color=orange" alt="Tests (pytest)"/>
+  <a href="https://github.com/juampatronics/ipyllm/actions/workflows/ci.yml" alt="Tests (pytest)">
+    <img src="https://img.shields.io/github/actions/workflow/status/juampatronics/ipyllm/ci.yml?job=test&label=tests" alt="Tests (pytest)"/>
   </a>
   <a href="https://pypi.org/project/ipyllm/" alt="PyPI version">
     <img src="https://img.shields.io/pypi/v/ipyllm?label=pypi" alt="PyPI version"/>
