@@ -48,7 +48,7 @@ class NumpyInspectorTests(unittest.TestCase):
         import numpy as np
 
         text = describe_object(np.array([1.0, 2.0, 3.0, 100.0]), "detail")
-        for token in ("mean=", "std=", "min=", "median=", "max=", "iqr=", "outlier_fence="):
+        for token in ("mean=", "std=", "min=", "median=", "max=", "iqr=", "outlier_fence=", "top5=[100, 3, 2, 1]"):
             self.assertIn(token, text)
 
     def test_full_adds_sample_values(self):
@@ -94,6 +94,17 @@ class PandasInspectorTests(unittest.TestCase):
         self.assertIn("missing=1", text)
         self.assertIn("mean=", text)
         self.assertIn("outlier_fence=", text)
+
+    def test_detail_lists_largest_values_for_threshold_counting(self):
+        import numpy as np
+        import pandas as pd
+
+        rng = np.random.default_rng(42)
+        values = rng.normal(0, 1, 100)
+        values[5] = 60.0  # only two values above 50
+        values[99] = 80.0
+        text = describe_object(pd.DataFrame({"x": values}), "detail")
+        self.assertIn("top5=[80, 60,", text)
 
     def test_full_adds_head_preview(self):
         import pandas as pd

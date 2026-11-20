@@ -46,6 +46,9 @@ import types
 MAX_INSPECT_CHARS = 12_000
 # How many DataFrame columns receive per-column (row-scanning) work.
 _MAX_STAT_COLUMNS = 40
+# How many largest values per numeric column are listed (detail and up), so
+# the model can count how many values exceed a threshold without executing.
+_TOP_K = 5
 # How many names/keys/values are shown before we elide the rest.
 _MAX_NAMES = 24
 # How many sample values / preview items we render.
@@ -189,11 +192,15 @@ def _array_stats(flat) -> str:
     q1, q3 = (float(v) for v in np.quantile(finite, [0.25, 0.75]))
     iqr = q3 - q1
     lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    k = min(_TOP_K, finite.size)
+    top = np.sort(np.partition(finite, finite.size - k)[-k:])[::-1]
+    top_rendered = ", ".join(_num(v) for v in top.tolist())
     return (
         f"min={_num(finite.min())} max={_num(finite.max())} "
         f"mean={_num(finite.mean())} std={_num(finite.std())} "
         f"median={_num(np.median(finite))} "
-        f"iqr=[{_num(q1)},{_num(q3)}] outlier_fence=[{_num(lo)},{_num(hi)}]"
+        f"iqr=[{_num(q1)},{_num(q3)}] outlier_fence=[{_num(lo)},{_num(hi)}] "
+        f"top{_TOP_K}=[{top_rendered}]"
     )
 
 
@@ -291,6 +298,23 @@ def _describe_pandas_columns(df, pd, limit: int) -> list[str]:
     return lines
 
 
+def _top_values(series, k: int = _TOP_K) -> str:
+    """The ``k`` largest non-missing values, in descending order.
+
+    Lets the model reason about how many values exceed a threshold without
+    executing code: entries of the list above the threshold are the answer
+    (or a lower bound when the list is exhausted).
+    """
+    try:
+        values = series.nlargest(k)
+    except Exception:  # noqa: BLE001
+        return f"top{k}=n/a"
+    if values.empty:
+        return f"top{k}=[]"
+    rendered = ", ".join(_num(v) for v in values.tolist())
+    return f"top{k}=[{rendered}]"
+
+
 def _series_stats(series) -> str:
     if series.dropna().empty:
         return "all missing"
@@ -305,7 +329,8 @@ def _series_stats(series) -> str:
     return (
         f"mean={_num(mean)} std={_num(std)} min={_num(minimum)} "
         f"median={_num(median)} max={_num(maximum)} "
-        f"iqr=[{_num(q1)},{_num(q3)}] outlier_fence=[{_num(lo)},{_num(hi)}]"
+        f"iqr=[{_num(q1)},{_num(q3)}] outlier_fence=[{_num(lo)},{_num(hi)}] "
+        + _top_values(series)
     )
 
 
